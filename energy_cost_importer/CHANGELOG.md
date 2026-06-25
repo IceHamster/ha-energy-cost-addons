@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- Start the Python process through `with-contenv` so Home Assistant app environment variables, including `SUPERVISOR_TOKEN`, are available.
+
 ## 0.1.2
 
 - Make tariff detail options optional when using built-in profiles.
