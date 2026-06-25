@@ -45,6 +45,7 @@ When `monthly_cost_entity` is a `sensor.*`, the sensor state is the estimated to
 - `capacity_next_tier`: next capacity tier label, if any.
 - `capacity_margin_to_next_kw`: kW margin before the next capacity tier.
 - `capacity_peak_days`, `capacity_peak_timestamps` and `capacity_peak_values_kw`: the peaks used by the capacity model. `capacity_peak_timestamps` contains the exact hour start for dashboard markers.
+- `capacity_daily_peak_days`, `capacity_daily_peak_timestamps` and `capacity_daily_peak_values_kw`: all daily maximum hourly consumption values for the month. Use these for fast capacity charts.
 - `capacity_basis_month`: the month used as the basis for capacity tier calculation.
 - `capacity_basis_incomplete`: `true` when the configured basis month has no imported consumption history.
 - `capacity_warning_level`: `ok`, `near_next_tier`, `at_highest_tier`, `fixed` or `disabled`.

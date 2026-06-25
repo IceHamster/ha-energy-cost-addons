@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3
+
+- Add `capacity_daily_peak_days`, `capacity_daily_peak_timestamps` and `capacity_daily_peak_values_kw`.
+- These attributes expose the daily maximum hourly consumption values that the monthly top-N capacity model uses.
+- Enables fast dashboards without browser-side recorder history queries.
+
 ## 0.2.2
 
 - Add `capacity_peak_timestamps` to the monthly cost sensor attributes.

@@ -613,6 +613,9 @@ def capacity_result_for_model(model: dict, day_peaks: dict, hourly_peaks: list[d
             "capacity_peak_days": [],
             "capacity_peak_timestamps": [],
             "capacity_peak_values_kw": [],
+            "capacity_daily_peak_days": [],
+            "capacity_daily_peak_timestamps": [],
+            "capacity_daily_peak_values_kw": [],
             "capacity_tier": "disabled",
             "capacity_current_tier": "disabled",
             "capacity_current_tier_min_kw": None,
@@ -633,6 +636,9 @@ def capacity_result_for_model(model: dict, day_peaks: dict, hourly_peaks: list[d
             "capacity_peak_days": [],
             "capacity_peak_timestamps": [],
             "capacity_peak_values_kw": [],
+            "capacity_daily_peak_days": [],
+            "capacity_daily_peak_timestamps": [],
+            "capacity_daily_peak_values_kw": [],
             "capacity_tier": "fixed",
             "capacity_current_tier": "fixed",
             "capacity_current_tier_min_kw": None,
@@ -647,9 +653,11 @@ def capacity_result_for_model(model: dict, day_peaks: dict, hourly_peaks: list[d
 
     peak_count = int(model.get("peak_count", 3))
     if model_type == "monthly_top_n_daily_peaks":
+        daily_peaks = sorted(day_peaks.values(), key=lambda item: item["date"])
         peaks = sorted(day_peaks.values(), key=lambda item: item["kw"], reverse=True)[:peak_count]
         metric_kw = sum(item["kw"] for item in peaks) / len(peaks) if peaks else 0.0
     else:
+        daily_peaks = []
         peaks = sorted(hourly_peaks, key=lambda item: item["kw"], reverse=True)[:1]
         metric_kw = peaks[0]["kw"] if peaks else 0.0
 
@@ -666,6 +674,9 @@ def capacity_result_for_model(model: dict, day_peaks: dict, hourly_peaks: list[d
         "capacity_peak_days": [item["date"] for item in peaks],
         "capacity_peak_timestamps": [item.get("timestamp", item["date"]) for item in peaks],
         "capacity_peak_values_kw": [round(float(item["kw"]), 3) for item in peaks],
+        "capacity_daily_peak_days": [item["date"] for item in daily_peaks],
+        "capacity_daily_peak_timestamps": [item.get("timestamp", item["date"]) for item in daily_peaks],
+        "capacity_daily_peak_values_kw": [round(float(item["kw"]), 3) for item in daily_peaks],
         "capacity_tier": current["label"] if current else "unknown",
         "capacity_current_tier": current["label"] if current else "unknown",
         "capacity_current_tier_min_kw": current_min,
@@ -694,6 +705,9 @@ def merge_capacity_results(results: list[dict], prorated_cost: float) -> dict:
         "capacity_peak_days": results[0].get("capacity_peak_days", []),
         "capacity_peak_timestamps": results[0].get("capacity_peak_timestamps", []),
         "capacity_peak_values_kw": results[0].get("capacity_peak_values_kw", []),
+        "capacity_daily_peak_days": results[0].get("capacity_daily_peak_days", []),
+        "capacity_daily_peak_timestamps": results[0].get("capacity_daily_peak_timestamps", []),
+        "capacity_daily_peak_values_kw": results[0].get("capacity_daily_peak_values_kw", []),
         "capacity_tier": " / ".join(dict.fromkeys(unique("capacity_tier"))) or "unknown",
         "capacity_current_tier": " / ".join(dict.fromkeys(unique("capacity_current_tier"))) or "unknown",
         "capacity_current_tier_min_kw": min(
@@ -982,6 +996,9 @@ def monthly_cost_attributes(options: dict, summary: dict, now: datetime) -> dict
         "capacity_peak_days": current_month.get("capacity_peak_days", []),
         "capacity_peak_timestamps": current_month.get("capacity_peak_timestamps", []),
         "capacity_peak_values_kw": current_month.get("capacity_peak_values_kw", []),
+        "capacity_daily_peak_days": current_month.get("capacity_daily_peak_days", []),
+        "capacity_daily_peak_timestamps": current_month.get("capacity_daily_peak_timestamps", []),
+        "capacity_daily_peak_values_kw": current_month.get("capacity_daily_peak_values_kw", []),
         "capacity_basis_month": current_month.get("capacity_basis_month", month_key(now, tz)),
         "capacity_basis_month_offset": current_month.get("capacity_basis_month_offset", 0),
         "capacity_basis_incomplete": bool(current_month.get("capacity_basis_incomplete", False)),
