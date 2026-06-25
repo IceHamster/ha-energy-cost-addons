@@ -34,6 +34,20 @@ PROFILE_DEFAULTS = {
 }
 
 
+BASE_TARIFF_DEFAULTS = {
+    "norgespris_enabled": False,
+    "norgespris_limit_kwh": 0.0,
+    "norgespris_nok_per_kwh": 0.0,
+    "provider_markup_nok_per_kwh": 0.0,
+    "provider_monthly_nok": 0.0,
+    "grid_day_nok_per_kwh": 0.0,
+    "grid_night_weekend_nok_per_kwh": 0.0,
+    "grid_capacity_profile": "custom",
+    "grid_capacity_monthly_nok": 0.0,
+    "grid_capacity_tiers_json": "[]",
+}
+
+
 CAPACITY_TIERS = {
     "fagne_2026": [
         (0, 5, 360.0),
@@ -66,13 +80,15 @@ def load_options() -> dict:
     with OPTIONS_PATH.open() as handle:
         options = json.load(handle)
     profile = options.get("profile", "custom")
+    profile_defaults = {}
     if profile != "custom":
         if profile not in PROFILE_DEFAULTS:
             raise ValueError(
                 f"Unknown profile '{profile}'. Use one of: "
                 f"{', '.join(sorted(PROFILE_DEFAULTS))}, custom"
             )
-        options = {**options, **PROFILE_DEFAULTS[profile]}
+        profile_defaults = PROFILE_DEFAULTS[profile]
+    options = {**BASE_TARIFF_DEFAULTS, **profile_defaults, **options}
     if options.get("grid_capacity_profile") not in CAPACITY_TIERS:
         if options.get("grid_capacity_profile") != "custom":
             raise ValueError(

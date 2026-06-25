@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2
+
+- Make tariff detail options optional when using built-in profiles.
+- Fill tariff defaults from the selected profile at runtime.
+- Allow explicit options to override profile defaults.
+
 ## 0.1.1
 
 - Use safe empty default entity IDs for generic installations.
