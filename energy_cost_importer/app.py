@@ -97,6 +97,15 @@ def grid_energy_ledd(dt: datetime, tz: ZoneInfo, options: dict) -> float:
 def capacity_tier(avg_kw: float, options: dict) -> tuple[str, float]:
     profile = options.get("grid_capacity_profile", "custom")
     if profile == "custom":
+        custom_tiers = json.loads(options.get("grid_capacity_tiers_json", "[]") or "[]")
+        for tier in custom_tiers:
+            lower, upper, amount = tier
+            lower = float(lower)
+            amount = float(amount)
+            if upper is None and avg_kw >= lower:
+                return f"over {lower:g} kW", amount
+            if upper is not None and lower <= avg_kw < float(upper):
+                return f"{lower:g}-{float(upper):g} kW", amount
         return "custom", float(options.get("grid_capacity_monthly_nok", 0.0))
     tiers = CAPACITY_TIERS[profile]
     for lower, upper, amount in tiers:

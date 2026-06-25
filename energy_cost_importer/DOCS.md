@@ -70,7 +70,15 @@ grid_day_nok_per_kwh: 0
 grid_night_weekend_nok_per_kwh: 0
 grid_capacity_profile: custom
 grid_capacity_monthly_nok: 0
+grid_capacity_tiers_json: "[]"
 norgespris_enabled: true
+```
+
+For custom capacity tiers, use JSON:
+
+```yaml
+grid_capacity_profile: custom
+grid_capacity_tiers_json: '[[0,2,150],[2,5,250],[5,10,400],[10,15,650],[15,20,900],[20,25,1150],[25,null,1150]]'
 ```
 
 Built-in grid capacity profiles:

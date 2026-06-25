@@ -33,6 +33,7 @@ options:
   grid_night_weekend_nok_per_kwh: 0.3516
   grid_capacity_profile: fagne_2026
   grid_capacity_monthly_nok: 0
+  grid_capacity_tiers_json: "[]"
 schema:
   profile: str
   energy_entity: str
@@ -56,3 +57,4 @@ schema:
   grid_night_weekend_nok_per_kwh: float
   grid_capacity_profile: str
   grid_capacity_monthly_nok: float
+  grid_capacity_tiers_json: str
