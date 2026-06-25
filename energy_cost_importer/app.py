@@ -611,6 +611,7 @@ def capacity_result_for_model(model: dict, day_peaks: dict, hourly_peaks: list[d
             "capacity_metric_kw": 0.0,
             "capacity_peak_count": 0,
             "capacity_peak_days": [],
+            "capacity_peak_timestamps": [],
             "capacity_peak_values_kw": [],
             "capacity_tier": "disabled",
             "capacity_current_tier": "disabled",
@@ -630,6 +631,7 @@ def capacity_result_for_model(model: dict, day_peaks: dict, hourly_peaks: list[d
             "capacity_metric_kw": 0.0,
             "capacity_peak_count": 0,
             "capacity_peak_days": [],
+            "capacity_peak_timestamps": [],
             "capacity_peak_values_kw": [],
             "capacity_tier": "fixed",
             "capacity_current_tier": "fixed",
@@ -662,6 +664,7 @@ def capacity_result_for_model(model: dict, day_peaks: dict, hourly_peaks: list[d
         "capacity_metric_kw": metric_kw,
         "capacity_peak_count": peak_count,
         "capacity_peak_days": [item["date"] for item in peaks],
+        "capacity_peak_timestamps": [item.get("timestamp", item["date"]) for item in peaks],
         "capacity_peak_values_kw": [round(float(item["kw"]), 3) for item in peaks],
         "capacity_tier": current["label"] if current else "unknown",
         "capacity_current_tier": current["label"] if current else "unknown",
@@ -689,6 +692,7 @@ def merge_capacity_results(results: list[dict], prorated_cost: float) -> dict:
         "capacity_metric_kw": metric,
         "capacity_peak_count": max(int(item.get("capacity_peak_count", 0)) for item in results),
         "capacity_peak_days": results[0].get("capacity_peak_days", []),
+        "capacity_peak_timestamps": results[0].get("capacity_peak_timestamps", []),
         "capacity_peak_values_kw": results[0].get("capacity_peak_values_kw", []),
         "capacity_tier": " / ".join(dict.fromkeys(unique("capacity_tier"))) or "unknown",
         "capacity_current_tier": " / ".join(dict.fromkeys(unique("capacity_current_tier"))) or "unknown",
@@ -787,10 +791,14 @@ def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -
         start = datetime.fromtimestamp(row["start"] / 1000, tz=tz)
         key = month_key(start, tz)
         clean_rows.append((int(row["start"]), start, kwh))
-        hourly_peaks_by_month[key].append({"date": start.isoformat(), "kw": kwh})
+        hourly_peaks_by_month[key].append({"date": start.isoformat(), "timestamp": start.isoformat(), "kw": kwh})
         date_key = start.date().isoformat()
         if kwh >= daily_peak_by_month[key].get(date_key, {"kw": -1.0})["kw"]:
-            daily_peak_by_month[key][date_key] = {"date": date_key, "kw": kwh}
+            daily_peak_by_month[key][date_key] = {
+                "date": date_key,
+                "timestamp": start.isoformat(),
+                "kw": kwh,
+            }
 
     monthly_fixed = {}
     for key, day_peaks in daily_peak_by_month.items():
@@ -972,6 +980,7 @@ def monthly_cost_attributes(options: dict, summary: dict, now: datetime) -> dict
         "capacity_monthly_cost": rounded(current_month.get("capacity_cost", 0.0), 0),
         "capacity_peak_count": int(current_month.get("capacity_peak_count", 0)),
         "capacity_peak_days": current_month.get("capacity_peak_days", []),
+        "capacity_peak_timestamps": current_month.get("capacity_peak_timestamps", []),
         "capacity_peak_values_kw": current_month.get("capacity_peak_values_kw", []),
         "capacity_basis_month": current_month.get("capacity_basis_month", month_key(now, tz)),
         "capacity_basis_month_offset": current_month.get("capacity_basis_month_offset", 0),

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- Add `capacity_peak_timestamps` to the monthly cost sensor attributes.
+- Keep `capacity_peak_days` and `capacity_peak_values_kw` unchanged for backward compatibility.
+- Enables dashboards to place capacity peak markers at the exact hour that affected the capacity tier.
+
 ## 0.2.1
 
 - Add official private grid tariff presets for Elvia 2026 and Eviny/BKK 2026.
