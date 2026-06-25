@@ -1,0 +1,58 @@
+name: Energy Cost Importer
+version: "0.1.0"
+slug: energy_cost_importer
+description: Import calculated electricity cost statistics for the Home Assistant Energy dashboard.
+arch:
+  - aarch64
+  - amd64
+startup: application
+boot: auto
+init: false
+homeassistant_api: true
+hassio_role: default
+options:
+  profile: custom
+  energy_entity: sensor.energy_consumption
+  spot_entity: sensor.nordpool
+  spot_price_unit: ore_per_kwh
+  spot_price_multiplier_to_nok_per_kwh: 0.01
+  cost_statistic_id: energy_cost_importer:total
+  cost_source: energy_cost_importer
+  start_time: "2026-01-01T00:00:00+01:00"
+  timezone: Europe/Oslo
+  update_interval_minutes: 60
+  daily_rebuild_time: "03:17"
+  replace_on_start: false
+  update_energy_dashboard: true
+  norgespris_enabled: true
+  norgespris_limit_kwh: 1000
+  norgespris_nok_per_kwh: 0.50
+  provider_markup_nok_per_kwh: 0.0225
+  provider_monthly_nok: 19
+  grid_day_nok_per_kwh: 0.4516
+  grid_night_weekend_nok_per_kwh: 0.3516
+  grid_capacity_profile: fagne_2026
+  grid_capacity_monthly_nok: 0
+schema:
+  profile: str
+  energy_entity: str
+  spot_entity: str
+  spot_price_unit: str
+  spot_price_multiplier_to_nok_per_kwh: float
+  cost_statistic_id: str
+  cost_source: str
+  start_time: str
+  timezone: str
+  update_interval_minutes: int(15,1440)
+  daily_rebuild_time: match(^([01][0-9]|2[0-3]):[0-5][0-9]$)
+  replace_on_start: bool
+  update_energy_dashboard: bool
+  norgespris_enabled: bool
+  norgespris_limit_kwh: float
+  norgespris_nok_per_kwh: float
+  provider_markup_nok_per_kwh: float
+  provider_monthly_nok: float
+  grid_day_nok_per_kwh: float
+  grid_night_weekend_nok_per_kwh: float
+  grid_capacity_profile: str
+  grid_capacity_monthly_nok: float
