@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6
+
+- Add day, week and month cost breakdown attributes to sensor-based `monthly_cost_entity`.
+- Add monthly tariff component attributes for dashboard breakdown cards.
+
 ## 0.1.5
 
 - Allow `monthly_cost_entity` to be a non-editable `sensor.*` entity.

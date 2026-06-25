@@ -121,6 +121,50 @@ def month_key(dt: datetime, tz: ZoneInfo) -> str:
     return dt.astimezone(tz).strftime("%Y-%m")
 
 
+def week_key(dt: datetime, tz: ZoneInfo) -> str:
+    local = dt.astimezone(tz)
+    year, week, _ = local.isocalendar()
+    return f"{year}-W{week:02d}"
+
+
+def day_key(dt: datetime, tz: ZoneInfo) -> str:
+    return dt.astimezone(tz).strftime("%Y-%m-%d")
+
+
+def empty_cost_summary() -> dict:
+    return {
+        "kwh": 0.0,
+        "quota_kwh": 0.0,
+        "spot_kwh": 0.0,
+        "power_cost": 0.0,
+        "provider_markup": 0.0,
+        "grid_energy": 0.0,
+        "fixed": 0.0,
+        "variable_total": 0.0,
+        "total": 0.0,
+    }
+
+
+def add_variable_cost(
+    summary: dict,
+    kwh: float,
+    quota_kwh: float,
+    spot_kwh: float,
+    power_cost: float,
+    markup_cost: float,
+    grid_cost: float,
+) -> None:
+    variable_cost = power_cost + markup_cost + grid_cost
+    summary["kwh"] += kwh
+    summary["quota_kwh"] += quota_kwh
+    summary["spot_kwh"] += spot_kwh
+    summary["power_cost"] += power_cost
+    summary["provider_markup"] += markup_cost
+    summary["grid_energy"] += grid_cost
+    summary["variable_total"] += variable_cost
+    summary["total"] += variable_cost
+
+
 def grid_energy_ledd(dt: datetime, tz: ZoneInfo, options: dict) -> float:
     local = dt.astimezone(tz)
     is_weekday_day = local.weekday() < 5 and 6 <= local.hour < 22
@@ -204,18 +248,9 @@ def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -
     stats = []
     spot_index = 0
     last_spot_price = sorted_spot[0][1] if sorted_spot else norgespris
-    summary = defaultdict(
-        lambda: {
-            "kwh": 0.0,
-            "quota_kwh": 0.0,
-            "spot_kwh": 0.0,
-            "power_cost": 0.0,
-            "provider_markup": 0.0,
-            "grid_energy": 0.0,
-            "fixed": 0.0,
-            "total": 0.0,
-        }
-    )
+    months = defaultdict(empty_cost_summary)
+    weeks = defaultdict(empty_cost_summary)
+    days = defaultdict(empty_cost_summary)
 
     for start_ms, start, kwh in clean_rows:
         while spot_index < len(sorted_spot) and sorted_spot[spot_index][0] <= start_ms:
@@ -226,7 +261,7 @@ def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -
         if key not in fixed_added:
             fixed = monthly_fixed[key]["fixed_total"]
             cumulative += fixed
-            summary[key]["fixed"] += fixed
+            months[key]["fixed"] += fixed
             fixed_added.add(key)
 
         if norgespris_enabled:
@@ -243,13 +278,33 @@ def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -
         cost = power_cost + markup_cost + grid_cost
         cumulative += cost
 
-        summary[key]["kwh"] += kwh
-        summary[key]["quota_kwh"] += quota_kwh
-        summary[key]["spot_kwh"] += spot_kwh
-        summary[key]["power_cost"] += power_cost
-        summary[key]["provider_markup"] += markup_cost
-        summary[key]["grid_energy"] += grid_cost
-        summary[key]["total"] += cost
+        add_variable_cost(
+            months[key],
+            kwh,
+            quota_kwh,
+            spot_kwh,
+            power_cost,
+            markup_cost,
+            grid_cost,
+        )
+        add_variable_cost(
+            weeks[week_key(start, tz)],
+            kwh,
+            quota_kwh,
+            spot_kwh,
+            power_cost,
+            markup_cost,
+            grid_cost,
+        )
+        add_variable_cost(
+            days[day_key(start, tz)],
+            kwh,
+            quota_kwh,
+            spot_kwh,
+            power_cost,
+            markup_cost,
+            grid_cost,
+        )
 
         stats.append(
             {
@@ -260,12 +315,55 @@ def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -
         )
 
     for key, fixed in monthly_fixed.items():
-        summary[key].update(fixed)
-        summary[key]["total"] += summary[key]["fixed"]
-        summary[key]["quota_left"] = max(quota_limit - summary[key]["kwh"], 0.0)
-        summary[key]["above_quota"] = max(summary[key]["kwh"] - quota_limit, 0.0)
+        months[key].update(fixed)
+        months[key]["total"] += months[key]["fixed"]
+        months[key]["quota_left"] = max(quota_limit - months[key]["kwh"], 0.0)
+        months[key]["above_quota"] = max(months[key]["kwh"] - quota_limit, 0.0)
 
-    return stats, {"months": dict(sorted(summary.items()))}
+    return stats, {
+        "days": dict(sorted(days.items())),
+        "weeks": dict(sorted(weeks.items())),
+        "months": dict(sorted(months.items())),
+    }
+
+
+def rounded(value: float, digits: int = 0) -> float:
+    return round(float(value), digits)
+
+
+def monthly_cost_attributes(options: dict, summary: dict, now: datetime) -> dict:
+    tz = ZoneInfo(options["timezone"])
+    current_day = summary["days"].get(day_key(now, tz), empty_cost_summary())
+    current_week = summary["weeks"].get(week_key(now, tz), empty_cost_summary())
+    current_month = summary["months"].get(month_key(now, tz), empty_cost_summary())
+    quota_limit = float(options["norgespris_limit_kwh"])
+    return {
+        "friendly_name": "Power cost this month",
+        "unit_of_measurement": "NOK",
+        "device_class": "monetary",
+        "icon": "mdi:cash",
+        "last_calculated": now.isoformat(),
+        "today_cost": rounded(current_day["total"], 0),
+        "today_kwh": rounded(current_day["kwh"], 1),
+        "week_cost": rounded(current_week["total"], 0),
+        "week_kwh": rounded(current_week["kwh"], 1),
+        "month_cost": rounded(current_month["total"], 0),
+        "month_kwh": rounded(current_month["kwh"], 1),
+        "month_variable_cost": rounded(current_month["variable_total"], 0),
+        "month_fixed_cost": rounded(current_month["fixed"], 0),
+        "month_power_cost": rounded(current_month["power_cost"], 0),
+        "month_grid_energy_cost": rounded(current_month["grid_energy"], 0),
+        "month_provider_markup_cost": rounded(current_month["provider_markup"], 0),
+        "month_capacity_cost": rounded(current_month.get("capacity_cost", 0.0), 0),
+        "month_provider_fixed_cost": rounded(current_month.get("provider_fixed", 0.0), 0),
+        "norgespris_limit_kwh": rounded(quota_limit, 0),
+        "norgespris_used_kwh": rounded(current_month["quota_kwh"], 1),
+        "quota_left_kwh": rounded(max(quota_limit - current_month["kwh"], 0.0), 1),
+        "above_quota_kwh": rounded(max(current_month["kwh"] - quota_limit, 0.0), 1),
+        "spot_kwh": rounded(current_month["spot_kwh"], 1),
+        "capacity_tier": current_month.get("capacity_tier", "unknown"),
+        "top_three_avg_kw": rounded(current_month.get("top_three_avg_kw", 0.0), 2),
+    }
 
 
 async def send_command(ws, msg_id: int, command: dict) -> dict:
@@ -398,7 +496,8 @@ async def import_costs(options: dict, replace: bool) -> None:
         monthly_cost_entity = str(options.get("monthly_cost_entity", "")).strip()
         if monthly_cost_entity:
             tz = ZoneInfo(options["timezone"])
-            current_key = month_key(datetime.now(tz), tz)
+            now = datetime.now(tz)
+            current_key = month_key(now, tz)
             current_month = summary["months"].get(current_key)
             if current_month:
                 current_month_cost = round(float(current_month["total"]), 0)
@@ -419,12 +518,7 @@ async def import_costs(options: dict, replace: bool) -> None:
                         set_core_state,
                         monthly_cost_entity,
                         current_month_cost,
-                        {
-                            "friendly_name": "Power cost this month",
-                            "unit_of_measurement": "NOK",
-                            "device_class": "monetary",
-                            "icon": "mdi:cash",
-                        },
+                        monthly_cost_attributes(options, summary, now),
                     )
                 log(f"Updated {monthly_cost_entity} to {current_month['total']:.0f} NOK")
 

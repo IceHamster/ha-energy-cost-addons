@@ -31,6 +31,20 @@ monthly_cost_entity: sensor.hytte_stromkostnad_denne_maneden
 
 The add-on creates/updates this sensor through the Home Assistant API. It is not editable from the UI, which is preferred for dashboard display.
 
+When `monthly_cost_entity` is a `sensor.*`, the sensor state is the estimated total cost for the current month. The add-on also adds attributes for dashboard cards:
+
+- `today_cost` and `today_kwh`: variable usage cost and consumption today.
+- `week_cost` and `week_kwh`: variable usage cost and consumption this ISO week, Monday to Sunday.
+- `month_cost` and `month_kwh`: estimated current month cost and consumption.
+- `quota_left_kwh`, `norgespris_used_kwh`, `above_quota_kwh` and `spot_kwh`: quota status.
+- `month_power_cost`, `month_grid_energy_cost`, `month_fixed_cost`, `month_capacity_cost`, `month_provider_fixed_cost` and `month_provider_markup_cost`: cost components.
+
+Recommended dashboard pattern:
+
+- Main view: show current month cost, current month kWh and remaining quota.
+- Details view: show today/week/month cards and the cost component breakdown.
+- Energy dashboard: use the imported statistic for historical day/week/month views.
+
 Legacy alternative:
 
 1. Go to Settings -> Devices & services -> Helpers.
@@ -82,7 +96,7 @@ spot_entity: sensor.nordpool
 spot_price_unit: ore_per_kwh
 spot_price_multiplier_to_nok_per_kwh: 0.01
 cost_statistic_id: energy_cost_importer:vibb_lnett_total
-monthly_cost_entity: input_number.monthly_power_cost
+monthly_cost_entity: sensor.monthly_power_cost
 start_time: "2026-01-01T00:00:00+01:00"
 update_interval_minutes: 60
 daily_rebuild_time: "03:17"
