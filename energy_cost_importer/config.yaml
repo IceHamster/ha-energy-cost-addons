@@ -1,5 +1,5 @@
 name: Energy Cost Importer
-version: "0.1.0"
+version: "0.1.1"
 slug: energy_cost_importer
 description: Import calculated electricity cost statistics for the Home Assistant Energy dashboard.
 arch:
@@ -12,8 +12,8 @@ homeassistant_api: true
 hassio_role: default
 options:
   profile: custom
-  energy_entity: sensor.energy_consumption
-  spot_entity: sensor.nordpool
+  energy_entity: ""
+  spot_entity: ""
   spot_price_unit: ore_per_kwh
   spot_price_multiplier_to_nok_per_kwh: 0.01
   cost_statistic_id: energy_cost_importer:total
@@ -23,7 +23,7 @@ options:
   update_interval_minutes: 60
   daily_rebuild_time: "03:17"
   replace_on_start: false
-  update_energy_dashboard: true
+  update_energy_dashboard: false
   norgespris_enabled: true
   norgespris_limit_kwh: 1000
   norgespris_nok_per_kwh: 0.50

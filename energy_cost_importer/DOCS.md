@@ -11,6 +11,8 @@ This app calculates an imported cost statistic for Home Assistant Energy. It is 
 
 The app can also point the Energy dashboard to the calculated cost statistic.
 
+The add-on must be configured before first start. The default options intentionally use empty entity IDs so a generic install cannot accidentally change your Energy dashboard.
+
 ## Example: Haugaland Kraft Hyttekraft and Fagne
 
 ```yaml

@@ -79,7 +79,21 @@ def load_options() -> dict:
                 f"Unknown grid_capacity_profile '{options.get('grid_capacity_profile')}'. "
                 f"Use one of: {', '.join(sorted(CAPACITY_TIERS))}"
             )
+    validate_options(options)
     return options
+
+
+def validate_options(options: dict) -> None:
+    required_entities = ["energy_entity", "spot_entity"]
+    for key in required_entities:
+        value = str(options.get(key, "")).strip()
+        if not value:
+            raise ValueError(f"{key} must be configured before starting the add-on")
+        if not value.startswith("sensor."):
+            raise ValueError(f"{key} must be a sensor entity_id, got {value!r}")
+    statistic_id = str(options.get("cost_statistic_id", "")).strip()
+    if ":" not in statistic_id:
+        raise ValueError("cost_statistic_id must be an external statistic id, for example energy_cost_importer:total")
 
 
 def month_key(dt: datetime, tz: ZoneInfo) -> str:
