@@ -45,6 +45,8 @@ When `monthly_cost_entity` is a `sensor.*`, the sensor state is the estimated to
 - `capacity_next_tier`: next capacity tier label, if any.
 - `capacity_margin_to_next_kw`: kW margin before the next capacity tier.
 - `capacity_peak_days` and `capacity_peak_values_kw`: the peaks used by the capacity model.
+- `capacity_basis_month`: the month used as the basis for capacity tier calculation.
+- `capacity_basis_incomplete`: `true` when the configured basis month has no imported consumption history.
 - `capacity_warning_level`: `ok`, `near_next_tier`, `at_highest_tier`, `fixed` or `disabled`.
 
 Recommended dashboard pattern:
@@ -111,6 +113,96 @@ daily_rebuild_time: "03:17"
 update_energy_dashboard: true
 ```
 
+## Grid tariff profiles
+
+Use `grid_tariff_profile` when the power supplier and the grid owner should be configured separately. This is preferred for new setups because the same supplier profile can be combined with different grid owners.
+
+Current built-in grid tariff profiles:
+
+- `fagne_2026_private`: Fagne private/cabin tariff defaults used by the legacy Hyttekraft + Fagne profile.
+- `lnett_2026_private`: LNETT private tariff defaults used by the legacy Vibb + LNETT profile.
+- `elvia_2026_private`: Elvia private tariff from 2026-07-01. Uses the official tariff sheet day/night energy prices and Elvia capacity steps.
+- `eviny_bkk_2026_private`: Eviny/BKK private tariff from 2026-01-01. Uses BKK day/night energy prices and capacity steps.
+- `bkk_2026_private`: same as `eviny_bkk_2026_private`, with the grid company name.
+
+Historical aliases for dated tariff periods:
+
+- `eviny_bkk_2025_private`
+- `bkk_2025_private`
+
+The grid day/night split treats weekdays 06:00-22:00 as day price. Evenings, nights, weekends and Norwegian public holidays use the night/weekend price.
+
+BKK/Eviny calculates the capacity tier from the previous month. The add-on handles this with `capacity_basis_month_offset: -1` in the built-in model. If your `start_time` does not include the previous month, the first calculated month can show `capacity_basis_incomplete: true`.
+
+Example with a custom supplier and Elvia grid:
+
+```yaml
+profile: custom
+grid_tariff_profile: elvia_2026_private
+provider_monthly_nok: 49
+provider_markup_nok_per_kwh: 0
+energy_entity: sensor.monthly_energy
+spot_entity: sensor.nordpool
+spot_price_unit: ore_per_kwh
+spot_price_multiplier_to_nok_per_kwh: 0.01
+cost_statistic_id: energy_cost_importer:elvia_total
+monthly_cost_entity: sensor.power_cost_this_month
+start_time: "2026-07-01T00:00:00+02:00"
+timezone: Europe/Oslo
+update_interval_minutes: 60
+daily_rebuild_time: "03:17"
+update_energy_dashboard: true
+norgespris_enabled: true
+norgespris_limit_kwh: 5000
+norgespris_nok_per_kwh: 0.50
+```
+
+Example with a custom supplier and LNETT grid:
+
+```yaml
+profile: custom
+grid_tariff_profile: lnett_2026_private
+provider_monthly_nok: 49
+provider_markup_nok_per_kwh: 0
+energy_entity: sensor.monthly_energy
+spot_entity: sensor.nordpool
+spot_price_unit: ore_per_kwh
+spot_price_multiplier_to_nok_per_kwh: 0.01
+cost_statistic_id: energy_cost_importer:lnett_total
+monthly_cost_entity: sensor.power_cost_this_month
+start_time: "2026-01-01T00:00:00+01:00"
+timezone: Europe/Oslo
+update_interval_minutes: 60
+daily_rebuild_time: "03:17"
+update_energy_dashboard: true
+norgespris_enabled: true
+norgespris_limit_kwh: 5000
+norgespris_nok_per_kwh: 0.50
+```
+
+Example with a custom supplier and Eviny/BKK grid:
+
+```yaml
+profile: custom
+grid_tariff_profile: eviny_bkk_2026_private
+provider_monthly_nok: 49
+provider_markup_nok_per_kwh: 0
+energy_entity: sensor.monthly_energy
+spot_entity: sensor.nordpool
+spot_price_unit: ore_per_kwh
+spot_price_multiplier_to_nok_per_kwh: 0.01
+cost_statistic_id: energy_cost_importer:eviny_bkk_total
+monthly_cost_entity: sensor.power_cost_this_month
+start_time: "2026-01-01T00:00:00+01:00"
+timezone: Europe/Oslo
+update_interval_minutes: 60
+daily_rebuild_time: "03:17"
+update_energy_dashboard: true
+norgespris_enabled: true
+norgespris_limit_kwh: 1000
+norgespris_nok_per_kwh: 0.50
+```
+
 ## Dated tariff periods
 
 Most users can keep the simple top-level configuration above. If prices change over time, use `tariff_periods_json` in the add-on configuration. Do not put this in `configuration.yaml` or in Lovelace.
@@ -125,6 +217,7 @@ When `tariff_periods_json` is configured, the add-on chooses the active tariff p
 - Periods must not overlap.
 - Fields inside a period override the top-level config.
 - A period can set its own `profile`; profile defaults are then applied before the period-specific overrides.
+- A period can set its own `grid_tariff_profile`; grid tariff defaults are then applied before the period-specific overrides.
 - Monthly provider fixed cost and grid capacity cost are prorated if a period starts or ends mid-month.
 - Capacity model fields can be set inside each tariff period if the grid owner's steps or calculation method change.
 
@@ -152,6 +245,7 @@ tariff_periods_json: >
       "valid_from": "2026-01-01T00:00:00+01:00",
       "valid_to": null,
       "profile": "vibb_lnett_norgespris",
+      "grid_tariff_profile": "",
       "norgespris_enabled": true,
       "norgespris_limit_kwh": 5000,
       "norgespris_nok_per_kwh": 0.50
@@ -211,6 +305,8 @@ Supported profiles:
 - `vibb_lnett_norgespris`: Vibb Spot, LNETT private grid tariff and Norgespris.
 - `custom`: use the numeric options directly.
 
+Profiles are convenience presets that may include both supplier and grid defaults. For new generic setups, use `profile: custom` plus `grid_tariff_profile` and explicit supplier fields.
+
 For `custom`, set:
 
 ```yaml
@@ -218,6 +314,7 @@ provider_markup_nok_per_kwh: 0
 provider_monthly_nok: 0
 grid_day_nok_per_kwh: 0
 grid_night_weekend_nok_per_kwh: 0
+grid_energy_rates_json: "[]"
 grid_capacity_profile: custom
 grid_capacity_monthly_nok: 0
 grid_capacity_tiers_json: "[]"
@@ -233,6 +330,8 @@ grid_capacity_tiers_json: '[[0,2,150],[2,5,250],[5,10,400],[10,15,650],[15,20,90
 
 Built-in grid capacity profiles:
 
+- `elvia_2026_private`
+- `bkk_2026_private`
 - `fagne_2026`
 - `lnett_2026_private`
 - `custom`
@@ -266,6 +365,21 @@ capacity_model_json: >
       {"label": "15-20 kW", "from_kw": 15, "to_kw": 20, "monthly_nok": 900},
       {"label": "20-25 kW", "from_kw": 20, "to_kw": 25, "monthly_nok": 1150},
       {"label": "over 25 kW", "from_kw": 25, "to_kw": null, "monthly_nok": 1150}
+    ]
+  }
+```
+
+For grid owners that use the previous month as the basis, add `capacity_basis_month_offset: -1`:
+
+```yaml
+capacity_model_json: >
+  {
+    "type": "monthly_top_n_daily_peaks",
+    "peak_count": 3,
+    "capacity_basis_month_offset": -1,
+    "tiers": [
+      {"label": "0-2 kW", "from_kw": 0, "to_kw": 2, "monthly_nok": 155},
+      {"label": "2-5 kW", "from_kw": 2, "to_kw": 5, "monthly_nok": 250}
     ]
   }
 ```
@@ -316,6 +430,7 @@ capacity_model_json: >
 - Keep old tariff periods if `replace_on_start: true` is enabled.
 - Use clear tier labels matching the grid owner's price list.
 - Verify whether the grid owner uses top daily peaks, one monthly max hour, fixed amount or another model before configuring.
+- Verify whether the capacity tier is based on the current month or a previous month.
 - Do not assume all Norwegian grid owners use the LNETT/Fagne model.
 
 Example inside a tariff period:

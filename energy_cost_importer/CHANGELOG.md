@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+- Add official private grid tariff presets for Elvia 2026 and Eviny/BKK 2026.
+- Add independent `grid_tariff_profile` so grid owner prices can be combined with any power supplier profile.
+- Split Fagne and LNETT into independent grid tariff profiles while keeping old combined profiles backward compatible.
+- Add seasonal grid energy rates through `grid_energy_rates_json`.
+- Add Norwegian public-holiday handling for grid day/night energy tariffs.
+- Add `capacity_basis_month_offset` for grid owners where the capacity tier is based on a previous month.
+
 ## 0.2.0
 
 - Add data-driven `capacity_model_json` for grid owner capacity tariffs.

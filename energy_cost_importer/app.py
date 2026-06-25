@@ -3,7 +3,7 @@ import json
 import os
 from copy import deepcopy
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib import request
 from zoneinfo import ZoneInfo
@@ -23,6 +23,7 @@ PROFILE_DEFAULTS = {
     "hyttekraft_fagne_hytte": {
         "provider_markup_nok_per_kwh": 0.0225,
         "provider_monthly_nok": 19.0,
+        "grid_tariff_profile": "fagne_2026_private",
         "grid_day_nok_per_kwh": 0.4516,
         "grid_night_weekend_nok_per_kwh": 0.3516,
         "grid_capacity_profile": "fagne_2026",
@@ -31,6 +32,7 @@ PROFILE_DEFAULTS = {
     "vibb_lnett_norgespris": {
         "provider_markup_nok_per_kwh": 0.0,
         "provider_monthly_nok": 49.0,
+        "grid_tariff_profile": "lnett_2026_private",
         "grid_day_nok_per_kwh": 0.4216,
         "grid_night_weekend_nok_per_kwh": 0.2716,
         "grid_capacity_profile": "lnett_2026_private",
@@ -45,8 +47,10 @@ BASE_TARIFF_DEFAULTS = {
     "norgespris_nok_per_kwh": 0.0,
     "provider_markup_nok_per_kwh": 0.0,
     "provider_monthly_nok": 0.0,
+    "grid_tariff_profile": "",
     "grid_day_nok_per_kwh": 0.0,
     "grid_night_weekend_nok_per_kwh": 0.0,
+    "grid_energy_rates_json": "[]",
     "grid_capacity_profile": "custom",
     "grid_capacity_monthly_nok": 0.0,
     "grid_capacity_tiers_json": "[]",
@@ -85,6 +89,89 @@ BUILTIN_CAPACITY_MODELS = {
             {"label": "over 25 kW", "from_kw": 25, "to_kw": None, "monthly_nok": 1150.0},
         ],
     },
+    "elvia_2026_private": {
+        "type": "monthly_top_n_daily_peaks",
+        "peak_count": 3,
+        "tiers": [
+            {"label": "0-2 kW", "from_kw": 0, "to_kw": 2, "monthly_nok": 150.0},
+            {"label": "2-5 kW", "from_kw": 2, "to_kw": 5, "monthly_nok": 250.0},
+            {"label": "5-10 kW", "from_kw": 5, "to_kw": 10, "monthly_nok": 420.0},
+            {"label": "10-15 kW", "from_kw": 10, "to_kw": 15, "monthly_nok": 585.0},
+            {"label": "15-20 kW", "from_kw": 15, "to_kw": 20, "monthly_nok": 755.0},
+            {"label": "20-25 kW", "from_kw": 20, "to_kw": 25, "monthly_nok": 925.0},
+            {"label": "25-50 kW", "from_kw": 25, "to_kw": 50, "monthly_nok": 1760.0},
+            {"label": "50-75 kW", "from_kw": 50, "to_kw": 75, "monthly_nok": 2600.0},
+            {"label": "75-100 kW", "from_kw": 75, "to_kw": 100, "monthly_nok": 3440.0},
+            {"label": "over 100 kW", "from_kw": 100, "to_kw": None, "monthly_nok": 6800.0},
+        ],
+    },
+    "bkk_2026_private": {
+        "type": "monthly_top_n_daily_peaks",
+        "peak_count": 3,
+        "capacity_basis_month_offset": -1,
+        "tiers": [
+            {"label": "0-2 kW", "from_kw": 0, "to_kw": 2, "monthly_nok": 155.0},
+            {"label": "2-5 kW", "from_kw": 2, "to_kw": 5, "monthly_nok": 250.0},
+            {"label": "5-10 kW", "from_kw": 5, "to_kw": 10, "monthly_nok": 415.0},
+            {"label": "10-15 kW", "from_kw": 10, "to_kw": 15, "monthly_nok": 600.0},
+            {"label": "15-20 kW", "from_kw": 15, "to_kw": 20, "monthly_nok": 770.0},
+            {"label": "20-25 kW", "from_kw": 20, "to_kw": 25, "monthly_nok": 940.0},
+            {"label": "25-50 kW", "from_kw": 25, "to_kw": 50, "monthly_nok": 1800.0},
+            {"label": "50-75 kW", "from_kw": 50, "to_kw": 75, "monthly_nok": 2650.0},
+            {"label": "75-100 kW", "from_kw": 75, "to_kw": 100, "monthly_nok": 3500.0},
+            {"label": "over 100 kW", "from_kw": 100, "to_kw": None, "monthly_nok": 6900.0},
+        ],
+    },
+}
+
+
+GRID_TARIFF_DEFAULTS = {
+    "fagne_2026_private": {
+        "grid_day_nok_per_kwh": 0.4516,
+        "grid_night_weekend_nok_per_kwh": 0.3516,
+        "grid_energy_rates_json": "[]",
+        "grid_capacity_profile": "fagne_2026",
+    },
+    "lnett_2026_private": {
+        "grid_day_nok_per_kwh": 0.4216,
+        "grid_night_weekend_nok_per_kwh": 0.2716,
+        "grid_energy_rates_json": "[]",
+        "grid_capacity_profile": "lnett_2026_private",
+    },
+    "elvia_2026_private": {
+        "grid_day_nok_per_kwh": 0.4640,
+        "grid_night_weekend_nok_per_kwh": 0.3140,
+        "grid_energy_rates_json": "[]",
+        "grid_capacity_profile": "elvia_2026_private",
+    },
+    "bkk_2026_private": {
+        "grid_day_nok_per_kwh": 0.4613,
+        "grid_night_weekend_nok_per_kwh": 0.2329,
+        "grid_energy_rates_json": "[]",
+        "grid_capacity_profile": "bkk_2026_private",
+    },
+    "eviny_bkk_2026_private": {
+        "grid_day_nok_per_kwh": 0.4613,
+        "grid_night_weekend_nok_per_kwh": 0.2329,
+        "grid_energy_rates_json": "[]",
+        "grid_capacity_profile": "bkk_2026_private",
+    },
+    "bkk_2025_private": {
+        "grid_day_nok_per_kwh": 0.5287,
+        "grid_night_weekend_nok_per_kwh": 0.4065,
+        "grid_energy_rates_json": [
+            {"months": [10, 11, 12], "grid_day_nok_per_kwh": 0.5287, "grid_night_weekend_nok_per_kwh": 0.4065},
+        ],
+        "grid_capacity_profile": "bkk_2026_private",
+    },
+    "eviny_bkk_2025_private": {
+        "grid_day_nok_per_kwh": 0.5287,
+        "grid_night_weekend_nok_per_kwh": 0.4065,
+        "grid_energy_rates_json": [
+            {"months": [10, 11, 12], "grid_day_nok_per_kwh": 0.5287, "grid_night_weekend_nok_per_kwh": 0.4065},
+        ],
+        "grid_capacity_profile": "bkk_2026_private",
+    },
 }
 
 
@@ -103,9 +190,32 @@ def profile_defaults(profile: str) -> dict:
     return PROFILE_DEFAULTS[profile]
 
 
+def grid_tariff_defaults(profile: str) -> dict:
+    if profile in (None, "", "custom"):
+        return {}
+    if profile not in GRID_TARIFF_DEFAULTS:
+        raise ValueError(
+            f"Unknown grid_tariff_profile '{profile}'. Use one of: "
+            f"{', '.join(sorted(GRID_TARIFF_DEFAULTS))}, custom"
+        )
+    return deepcopy(GRID_TARIFF_DEFAULTS[profile])
+
+
 def resolve_options(raw_options: dict) -> dict:
     profile = raw_options.get("profile", "custom")
-    return {**BASE_TARIFF_DEFAULTS, **profile_defaults(profile), **raw_options}
+    options = {**BASE_TARIFF_DEFAULTS, **profile_defaults(profile)}
+    grid_profile = raw_options.get("grid_tariff_profile", options.get("grid_tariff_profile", ""))
+    grid_defaults = grid_tariff_defaults(grid_profile)
+    options.update(grid_defaults)
+    raw_overrides = {**raw_options}
+    if (
+        grid_profile not in (None, "", "custom")
+        and raw_overrides.get("grid_energy_rates_json") in (None, "", BASE_TARIFF_DEFAULTS["grid_energy_rates_json"])
+        and grid_defaults.get("grid_energy_rates_json") not in (None, "", BASE_TARIFF_DEFAULTS["grid_energy_rates_json"])
+    ):
+        raw_overrides.pop("grid_energy_rates_json", None)
+    options.update(raw_overrides)
+    return options
 
 
 def load_options() -> dict:
@@ -169,6 +279,8 @@ def build_period_options(period: dict, base_options: dict) -> dict:
         profile = period.get("profile", "custom")
         options.update(BASE_TARIFF_DEFAULTS)
         options.update(profile_defaults(profile))
+    grid_profile = period.get("grid_tariff_profile", options.get("grid_tariff_profile", ""))
+    options.update(grid_tariff_defaults(grid_profile))
     options.update(period)
     options.pop(INTERNAL_CAPACITY_MODEL, None)
     validate_capacity_profile(options)
@@ -247,6 +359,15 @@ def month_bounds(key: str, tz: ZoneInfo) -> tuple[datetime, datetime]:
     return start, end
 
 
+def shift_month_key(key: str, offset: int, tz: ZoneInfo) -> str:
+    if offset == 0:
+        return key
+    year, month = [int(part) for part in key.split("-", 1)]
+    month_index = year * 12 + (month - 1) + int(offset)
+    shifted_year, shifted_month_index = divmod(month_index, 12)
+    return datetime(shifted_year, shifted_month_index + 1, 1, tzinfo=tz).strftime("%Y-%m")
+
+
 def empty_cost_summary() -> dict:
     return {
         "kwh": 0.0,
@@ -281,12 +402,67 @@ def add_variable_cost(
     summary["total"] += variable_cost
 
 
+def norway_easter(year: int) -> date:
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return date(year, month, day)
+
+
+def is_norwegian_public_holiday(day: date) -> bool:
+    fixed_holidays = {(1, 1), (5, 1), (5, 17), (12, 25), (12, 26)}
+    if (day.month, day.day) in fixed_holidays:
+        return True
+    easter = norway_easter(day.year)
+    movable_holidays = {
+        easter - timedelta(days=3),
+        easter - timedelta(days=2),
+        easter,
+        easter + timedelta(days=1),
+        easter + timedelta(days=39),
+        easter + timedelta(days=49),
+        easter + timedelta(days=50),
+    }
+    return day in movable_holidays
+
+
+def grid_energy_rates(options: dict) -> list[dict]:
+    rates = parse_json_option(options.get("grid_energy_rates_json", "[]"), [], "grid_energy_rates_json")
+    if not isinstance(rates, list):
+        raise ValueError("grid_energy_rates_json must be a JSON list")
+    for index, rate in enumerate(rates):
+        if not isinstance(rate, dict):
+            raise ValueError(f"grid_energy_rates_json[{index}] must be an object")
+    return rates
+
+
+def grid_rate_options_for(dt: datetime, tz: ZoneInfo, options: dict) -> dict:
+    local = dt.astimezone(tz)
+    for rate in grid_energy_rates(options):
+        months = rate.get("months", [])
+        if not months or local.month in [int(month) for month in months]:
+            return {**options, **rate}
+    return options
+
+
 def grid_energy_ledd(dt: datetime, tz: ZoneInfo, options: dict) -> float:
     local = dt.astimezone(tz)
-    is_weekday_day = local.weekday() < 5 and 6 <= local.hour < 22
+    rate_options = grid_rate_options_for(dt, tz, options)
+    is_weekday_day = local.weekday() < 5 and 6 <= local.hour < 22 and not is_norwegian_public_holiday(local.date())
     if is_weekday_day:
-        return float(options["grid_day_nok_per_kwh"])
-    return float(options["grid_night_weekend_nok_per_kwh"])
+        return float(rate_options["grid_day_nok_per_kwh"])
+    return float(rate_options["grid_night_weekend_nok_per_kwh"])
 
 
 def has_custom_capacity_model(options: dict) -> bool:
@@ -336,6 +512,7 @@ def normalize_capacity_model(model: dict) -> dict:
         normalized["monthly_nok"] = float(model.get("monthly_nok", model.get("amount", 0.0)))
         normalized["tiers"] = []
         normalized["peak_count"] = int(model.get("peak_count", 0))
+        normalized["capacity_basis_month_offset"] = int(model.get("capacity_basis_month_offset", 0))
         return normalized
 
     if model_type not in {"monthly_top_n_daily_peaks", "monthly_max_hour"}:
@@ -353,6 +530,7 @@ def normalize_capacity_model(model: dict) -> dict:
             raise ValueError("capacity model tiers must not overlap")
     normalized["tiers"] = tiers
     normalized["peak_count"] = max(int(model.get("peak_count", 3 if model_type == "monthly_top_n_daily_peaks" else 1)), 1)
+    normalized["capacity_basis_month_offset"] = int(model.get("capacity_basis_month_offset", 0))
     return normalized
 
 
@@ -527,6 +705,9 @@ def merge_capacity_results(results: list[dict], prorated_cost: float) -> dict:
         "capacity_margin_to_next_kw": min(margins) if margins else None,
         "capacity_over_tier_min_kw": max(float(item.get("capacity_over_tier_min_kw", 0.0)) for item in results),
         "capacity_cost": prorated_cost,
+        "capacity_basis_month": " / ".join(dict.fromkeys(unique("capacity_basis_month"))),
+        "capacity_basis_month_offset": results[0].get("capacity_basis_month_offset", 0),
+        "capacity_basis_incomplete": any(bool(item.get("capacity_basis_incomplete", False)) for item in results),
         "capacity_warning_level": (
             "near_next_tier"
             if any(item.get("capacity_warning_level") == "near_next_tier" for item in results)
@@ -622,7 +803,14 @@ def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -
         for tariff, tariff_name, seconds in tariff_slices_for_range(month_start, month_end, options):
             fraction = seconds / month_seconds if month_seconds else 0.0
             model = build_capacity_model(tariff)
-            capacity = capacity_result_for_model(model, day_peaks, hourly_peaks_by_month[key], tariff)
+            basis_offset = int(model.get("capacity_basis_month_offset", 0))
+            basis_key = shift_month_key(key, basis_offset, tz)
+            basis_day_peaks = daily_peak_by_month.get(basis_key, {})
+            basis_hourly_peaks = hourly_peaks_by_month.get(basis_key, [])
+            capacity = capacity_result_for_model(model, basis_day_peaks, basis_hourly_peaks, tariff)
+            capacity["capacity_basis_month"] = basis_key
+            capacity["capacity_basis_month_offset"] = basis_offset
+            capacity["capacity_basis_incomplete"] = basis_offset != 0 and not (basis_day_peaks or basis_hourly_peaks)
             capacity_cost += capacity["capacity_cost"] * fraction
             provider_fixed += float(tariff["provider_monthly_nok"]) * fraction
             capacity_results.append(capacity)
@@ -785,6 +973,9 @@ def monthly_cost_attributes(options: dict, summary: dict, now: datetime) -> dict
         "capacity_peak_count": int(current_month.get("capacity_peak_count", 0)),
         "capacity_peak_days": current_month.get("capacity_peak_days", []),
         "capacity_peak_values_kw": current_month.get("capacity_peak_values_kw", []),
+        "capacity_basis_month": current_month.get("capacity_basis_month", month_key(now, tz)),
+        "capacity_basis_month_offset": current_month.get("capacity_basis_month_offset", 0),
+        "capacity_basis_incomplete": bool(current_month.get("capacity_basis_incomplete", False)),
         "capacity_warning_level": current_month.get("capacity_warning_level", ""),
         "tariff_periods": current_month.get("tariff_periods", ""),
     }
