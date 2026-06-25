@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.7
+
+- Add optional `tariff_periods_json` for dated tariff periods with `valid_from` and `valid_to`.
+- Keep existing top-level tariff config fully backward compatible when no tariff periods are configured.
+- Prorate monthly provider fixed cost and grid capacity cost when tariff periods change mid-month.
+- Add generated add-on logo/icon assets.
+
 ## 0.1.6
 
 - Add day, week and month cost breakdown attributes to sensor-based `monthly_cost_entity`.

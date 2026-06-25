@@ -14,6 +14,7 @@ OPTIONS_PATH = Path("/data/options.json")
 REPORT_PATH = Path("/data/last_report.json")
 CORE_WS_URL = "ws://supervisor/core/websocket"
 CORE_API_URL = "http://supervisor/core/api"
+INTERNAL_TARIFF_PERIODS = "_tariff_periods"
 
 
 PROFILE_DEFAULTS = {
@@ -47,6 +48,7 @@ BASE_TARIFF_DEFAULTS = {
     "grid_capacity_profile": "custom",
     "grid_capacity_monthly_nok": 0.0,
     "grid_capacity_tiers_json": "[]",
+    "tariff_periods_json": "[]",
 }
 
 
@@ -78,27 +80,39 @@ def log(message: str) -> None:
     print(f"[energy-cost-importer] {message}", flush=True)
 
 
+def profile_defaults(profile: str) -> dict:
+    if profile == "custom":
+        return {}
+    if profile not in PROFILE_DEFAULTS:
+        raise ValueError(
+            f"Unknown profile '{profile}'. Use one of: "
+            f"{', '.join(sorted(PROFILE_DEFAULTS))}, custom"
+        )
+    return PROFILE_DEFAULTS[profile]
+
+
+def resolve_options(raw_options: dict) -> dict:
+    profile = raw_options.get("profile", "custom")
+    return {**BASE_TARIFF_DEFAULTS, **profile_defaults(profile), **raw_options}
+
+
 def load_options() -> dict:
     with OPTIONS_PATH.open() as handle:
-        options = json.load(handle)
-    profile = options.get("profile", "custom")
-    profile_defaults = {}
-    if profile != "custom":
-        if profile not in PROFILE_DEFAULTS:
-            raise ValueError(
-                f"Unknown profile '{profile}'. Use one of: "
-                f"{', '.join(sorted(PROFILE_DEFAULTS))}, custom"
-            )
-        profile_defaults = PROFILE_DEFAULTS[profile]
-    options = {**BASE_TARIFF_DEFAULTS, **profile_defaults, **options}
-    if options.get("grid_capacity_profile") not in CAPACITY_TIERS:
-        if options.get("grid_capacity_profile") != "custom":
-            raise ValueError(
-                f"Unknown grid_capacity_profile '{options.get('grid_capacity_profile')}'. "
-                f"Use one of: {', '.join(sorted(CAPACITY_TIERS))}"
-            )
+        raw_options = json.load(handle)
+    options = resolve_options(raw_options)
+    validate_capacity_profile(options)
+    options[INTERNAL_TARIFF_PERIODS] = build_tariff_periods(raw_options, options)
     validate_options(options)
     return options
+
+
+def validate_capacity_profile(options: dict) -> None:
+    profile = options.get("grid_capacity_profile")
+    if profile not in CAPACITY_TIERS and profile != "custom":
+        raise ValueError(
+            f"Unknown grid_capacity_profile '{profile}'. "
+            f"Use one of: {', '.join(sorted(CAPACITY_TIERS))}, custom"
+        )
 
 
 def validate_options(options: dict) -> None:
@@ -117,6 +131,77 @@ def validate_options(options: dict) -> None:
         raise ValueError("monthly_cost_entity must be a sensor.* or input_number.* entity_id")
 
 
+def parse_datetime(value, tz: ZoneInfo, field: str) -> datetime | None:
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be an ISO datetime string or null")
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as err:
+        raise ValueError(f"{field} must be an ISO datetime string, got {value!r}") from err
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=tz)
+    return dt.astimezone(tz)
+
+
+def build_period_options(period: dict, base_options: dict) -> dict:
+    options = {**base_options}
+    if "profile" in period:
+        profile = period.get("profile", "custom")
+        options.update(BASE_TARIFF_DEFAULTS)
+        options.update(profile_defaults(profile))
+    options.update(period)
+    validate_capacity_profile(options)
+    return options
+
+
+def build_tariff_periods(raw_options: dict, base_options: dict) -> list[dict]:
+    raw_periods = raw_options.get("tariff_periods_json", base_options.get("tariff_periods_json", "[]"))
+    if raw_periods in (None, "", "[]"):
+        return []
+    if isinstance(raw_periods, str):
+        try:
+            periods = json.loads(raw_periods)
+        except json.JSONDecodeError as err:
+            raise ValueError("tariff_periods_json must contain valid JSON") from err
+    else:
+        periods = raw_periods
+    if not isinstance(periods, list):
+        raise ValueError("tariff_periods_json must be a JSON list")
+
+    tz = ZoneInfo(base_options["timezone"])
+    normalized = []
+    for index, period in enumerate(periods):
+        if not isinstance(period, dict):
+            raise ValueError(f"tariff_periods_json[{index}] must be an object")
+        valid_from = parse_datetime(period.get("valid_from"), tz, f"tariff_periods_json[{index}].valid_from")
+        valid_to = parse_datetime(period.get("valid_to"), tz, f"tariff_periods_json[{index}].valid_to")
+        if valid_from and valid_to and valid_to <= valid_from:
+            raise ValueError(f"tariff_periods_json[{index}].valid_to must be after valid_from")
+        period_options = build_period_options(period, base_options)
+        normalized.append(
+            {
+                "name": str(period.get("name") or period_options.get("profile") or f"tariff {index + 1}"),
+                "valid_from": valid_from,
+                "valid_to": valid_to,
+                "options": period_options,
+            }
+        )
+
+    start_floor = datetime.min.replace(tzinfo=tz)
+    end_ceiling = datetime.max.replace(tzinfo=tz)
+    normalized.sort(key=lambda item: item["valid_from"] or start_floor)
+    previous_end = None
+    for period in normalized:
+        start = period["valid_from"] or start_floor
+        end = period["valid_to"] or end_ceiling
+        if previous_end and start < previous_end:
+            raise ValueError("tariff_periods_json contains overlapping periods")
+        previous_end = end
+    return normalized
+
+
 def month_key(dt: datetime, tz: ZoneInfo) -> str:
     return dt.astimezone(tz).strftime("%Y-%m")
 
@@ -129,6 +214,16 @@ def week_key(dt: datetime, tz: ZoneInfo) -> str:
 
 def day_key(dt: datetime, tz: ZoneInfo) -> str:
     return dt.astimezone(tz).strftime("%Y-%m-%d")
+
+
+def month_bounds(key: str, tz: ZoneInfo) -> tuple[datetime, datetime]:
+    year, month = [int(part) for part in key.split("-", 1)]
+    start = datetime(year, month, 1, tzinfo=tz)
+    if month == 12:
+        end = datetime(year + 1, 1, 1, tzinfo=tz)
+    else:
+        end = datetime(year, month + 1, 1, tzinfo=tz)
+    return start, end
 
 
 def empty_cost_summary() -> dict:
@@ -195,6 +290,51 @@ def capacity_tier(avg_kw: float, options: dict) -> tuple[str, float]:
     return "unknown", 0.0
 
 
+def tariff_at(dt: datetime, options: dict) -> tuple[dict, str]:
+    for period in options.get(INTERNAL_TARIFF_PERIODS, []):
+        valid_from = period["valid_from"]
+        valid_to = period["valid_to"]
+        if valid_from and dt < valid_from:
+            continue
+        if valid_to and dt >= valid_to:
+            continue
+        return period["options"], period["name"]
+    return options, str(options.get("profile", "custom"))
+
+
+def tariff_slices_for_range(start: datetime, end: datetime, options: dict) -> list[tuple[dict, str, float]]:
+    periods = options.get(INTERNAL_TARIFF_PERIODS, [])
+    if not periods:
+        return [(options, str(options.get("profile", "custom")), (end - start).total_seconds())]
+
+    slices = []
+    cursor = start
+    for period in periods:
+        period_start = period["valid_from"] or start
+        period_end = period["valid_to"] or end
+        overlap_start = max(start, period_start)
+        overlap_end = min(end, period_end)
+        if overlap_start < overlap_end:
+            if cursor < overlap_start:
+                slices.append((options, str(options.get("profile", "custom")), (overlap_start - cursor).total_seconds()))
+            slices.append((period["options"], period["name"], (overlap_end - overlap_start).total_seconds()))
+            cursor = max(cursor, overlap_end)
+    if cursor < end:
+        slices.append((options, str(options.get("profile", "custom")), (end - cursor).total_seconds()))
+    return slices
+
+
+def quota_limit_for_month(month_start: datetime, month_end: datetime, options: dict) -> float:
+    limits = [
+        float(tariff["norgespris_limit_kwh"])
+        for tariff, _, _ in tariff_slices_for_range(month_start, month_end, options)
+        if bool(tariff.get("norgespris_enabled", True))
+    ]
+    if not limits:
+        return 0.0
+    return max(limits)
+
+
 def build_spot_rows(rows: list[dict], options: dict) -> list[tuple[int, float]]:
     multiplier = float(options.get("spot_price_multiplier_to_nok_per_kwh", 0.01))
     spot = []
@@ -226,28 +366,39 @@ def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -
 
     monthly_fixed = {}
     for key, day_peaks in daily_max_by_month.items():
+        month_start, month_end = month_bounds(key, tz)
+        month_seconds = (month_end - month_start).total_seconds()
         top_three = sorted(day_peaks.values(), reverse=True)[:3]
         avg_kw = sum(top_three) / len(top_three) if top_three else 0.0
-        tier_name, capacity_cost = capacity_tier(avg_kw, options)
-        provider_fixed = float(options["provider_monthly_nok"])
+        capacity_cost = 0.0
+        provider_fixed = 0.0
+        tier_names = []
+        tariff_names = []
+        for tariff, tariff_name, seconds in tariff_slices_for_range(month_start, month_end, options):
+            fraction = seconds / month_seconds if month_seconds else 0.0
+            tier_name, tier_cost = capacity_tier(avg_kw, tariff)
+            capacity_cost += tier_cost * fraction
+            provider_fixed += float(tariff["provider_monthly_nok"]) * fraction
+            if tier_name not in tier_names:
+                tier_names.append(tier_name)
+            if tariff_name not in tariff_names:
+                tariff_names.append(tariff_name)
         monthly_fixed[key] = {
             "top_three_avg_kw": avg_kw,
-            "capacity_tier": tier_name,
+            "capacity_tier": " / ".join(tier_names) if tier_names else "unknown",
             "capacity_cost": capacity_cost,
             "provider_fixed": provider_fixed,
             "fixed_total": capacity_cost + provider_fixed,
+            "quota_limit": quota_limit_for_month(month_start, month_end, options),
+            "tariff_periods": ", ".join(tariff_names),
         }
 
-    quota_limit = float(options["norgespris_limit_kwh"])
-    norgespris = float(options["norgespris_nok_per_kwh"])
-    markup = float(options["provider_markup_nok_per_kwh"])
-    norgespris_enabled = bool(options.get("norgespris_enabled", True))
-    quota_left = defaultdict(lambda: quota_limit)
+    quota_left = {}
     fixed_added = set()
     cumulative = 0.0
     stats = []
     spot_index = 0
-    last_spot_price = sorted_spot[0][1] if sorted_spot else norgespris
+    last_spot_price = sorted_spot[0][1] if sorted_spot else float(options["norgespris_nok_per_kwh"])
     months = defaultdict(empty_cost_summary)
     weeks = defaultdict(empty_cost_summary)
     days = defaultdict(empty_cost_summary)
@@ -258,13 +409,17 @@ def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -
             spot_index += 1
 
         key = month_key(start, tz)
+        tariff, _ = tariff_at(start, options)
         if key not in fixed_added:
             fixed = monthly_fixed[key]["fixed_total"]
             cumulative += fixed
             months[key]["fixed"] += fixed
             fixed_added.add(key)
 
-        if norgespris_enabled:
+        if key not in quota_left:
+            quota_left[key] = float(monthly_fixed[key]["quota_limit"])
+
+        if bool(tariff.get("norgespris_enabled", True)) and quota_left[key] > 0:
             quota_kwh = min(kwh, quota_left[key])
             spot_kwh = kwh - quota_kwh
             quota_left[key] -= quota_kwh
@@ -272,9 +427,11 @@ def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -
             quota_kwh = 0.0
             spot_kwh = kwh
 
+        norgespris = float(tariff["norgespris_nok_per_kwh"])
+        markup = float(tariff["provider_markup_nok_per_kwh"])
         power_cost = quota_kwh * norgespris + spot_kwh * last_spot_price
         markup_cost = kwh * markup
-        grid_cost = kwh * grid_energy_ledd(start, tz, options)
+        grid_cost = kwh * grid_energy_ledd(start, tz, tariff)
         cost = power_cost + markup_cost + grid_cost
         cumulative += cost
 
@@ -317,8 +474,9 @@ def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -
     for key, fixed in monthly_fixed.items():
         months[key].update(fixed)
         months[key]["total"] += months[key]["fixed"]
-        months[key]["quota_left"] = max(quota_limit - months[key]["kwh"], 0.0)
-        months[key]["above_quota"] = max(months[key]["kwh"] - quota_limit, 0.0)
+        quota_limit = float(fixed["quota_limit"])
+        months[key]["quota_left"] = max(quota_limit - months[key]["quota_kwh"], 0.0)
+        months[key]["above_quota"] = months[key]["spot_kwh"] if quota_limit > 0 else 0.0
 
     return stats, {
         "days": dict(sorted(days.items())),
@@ -336,7 +494,7 @@ def monthly_cost_attributes(options: dict, summary: dict, now: datetime) -> dict
     current_day = summary["days"].get(day_key(now, tz), empty_cost_summary())
     current_week = summary["weeks"].get(week_key(now, tz), empty_cost_summary())
     current_month = summary["months"].get(month_key(now, tz), empty_cost_summary())
-    quota_limit = float(options["norgespris_limit_kwh"])
+    quota_limit = float(current_month.get("quota_limit", options["norgespris_limit_kwh"]))
     return {
         "friendly_name": "Power cost this month",
         "unit_of_measurement": "NOK",
@@ -363,6 +521,7 @@ def monthly_cost_attributes(options: dict, summary: dict, now: datetime) -> dict
         "spot_kwh": rounded(current_month["spot_kwh"], 1),
         "capacity_tier": current_month.get("capacity_tier", "unknown"),
         "top_three_avg_kw": rounded(current_month.get("top_three_avg_kw", 0.0), 2),
+        "tariff_periods": current_month.get("tariff_periods", ""),
     }
 
 

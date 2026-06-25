@@ -8,6 +8,7 @@ This app calculates an imported cost statistic for Home Assistant Energy. It is 
 - Consumption above the monthly quota can use an hourly spot sensor.
 - Supplier markup and fixed monthly amount.
 - Grid energy tariff and capacity tier.
+- Optional dated tariff periods for historical price changes.
 
 The app can also point the Energy dashboard to the calculated cost statistic.
 
@@ -38,6 +39,7 @@ When `monthly_cost_entity` is a `sensor.*`, the sensor state is the estimated to
 - `month_cost` and `month_kwh`: estimated current month cost and consumption.
 - `quota_left_kwh`, `norgespris_used_kwh`, `above_quota_kwh` and `spot_kwh`: quota status.
 - `month_power_cost`, `month_grid_energy_cost`, `month_fixed_cost`, `month_capacity_cost`, `month_provider_fixed_cost` and `month_provider_markup_cost`: cost components.
+- `tariff_periods`: active tariff period name(s) for the current month.
 
 Recommended dashboard pattern:
 
@@ -102,6 +104,86 @@ update_interval_minutes: 60
 daily_rebuild_time: "03:17"
 update_energy_dashboard: true
 ```
+
+## Dated tariff periods
+
+Most users can keep the simple top-level configuration above. If prices change over time, use `tariff_periods_json` in the add-on configuration. Do not put this in `configuration.yaml` or in Lovelace.
+
+When `tariff_periods_json` is empty or omitted, the add-on behaves exactly like older versions: the top-level profile and tariff fields apply to the whole imported history.
+
+When `tariff_periods_json` is configured, the add-on chooses the active tariff period for each hourly consumption row:
+
+- `valid_from` is inclusive.
+- `valid_to` is exclusive.
+- `valid_to: null` means the period is open-ended.
+- Periods must not overlap.
+- Fields inside a period override the top-level config.
+- A period can set its own `profile`; profile defaults are then applied before the period-specific overrides.
+- Monthly provider fixed cost and grid capacity cost are prorated if a period starts or ends mid-month.
+
+Example with one open-ended Vibb + LNETT period:
+
+```yaml
+profile: vibb_lnett_norgespris
+energy_entity: sensor.energy_usage
+spot_entity: sensor.nordpool
+spot_price_unit: nok_per_kwh
+spot_price_multiplier_to_nok_per_kwh: 1
+cost_statistic_id: home_energy_cost:total_v2
+cost_source: home_energy_cost
+monthly_cost_entity: sensor.hjem_stromkostnad_denne_maneden
+start_time: "2026-01-01T00:00:00+01:00"
+timezone: Europe/Oslo
+update_interval_minutes: 60
+daily_rebuild_time: "03:17"
+replace_on_start: true
+update_energy_dashboard: true
+tariff_periods_json: >
+  [
+    {
+      "name": "Vibb + LNETT 2026",
+      "valid_from": "2026-01-01T00:00:00+01:00",
+      "valid_to": null,
+      "profile": "vibb_lnett_norgespris",
+      "norgespris_enabled": true,
+      "norgespris_limit_kwh": 5000,
+      "norgespris_nok_per_kwh": 0.50
+    }
+  ]
+```
+
+Example with a price change:
+
+```yaml
+tariff_periods_json: >
+  [
+    {
+      "name": "Old tariff",
+      "valid_from": "2026-01-01T00:00:00+01:00",
+      "valid_to": "2026-07-01T00:00:00+02:00",
+      "profile": "vibb_lnett_norgespris",
+      "grid_day_nok_per_kwh": 0.4216,
+      "grid_night_weekend_nok_per_kwh": 0.2716,
+      "provider_monthly_nok": 49
+    },
+    {
+      "name": "New tariff",
+      "valid_from": "2026-07-01T00:00:00+02:00",
+      "valid_to": null,
+      "profile": "vibb_lnett_norgespris",
+      "grid_day_nok_per_kwh": 0.4300,
+      "grid_night_weekend_nok_per_kwh": 0.2800,
+      "provider_monthly_nok": 49
+    }
+  ]
+```
+
+Best practice:
+
+- Start new periods on the first day of a month when possible.
+- Keep old periods in the config if you use `replace_on_start: true`, otherwise old history can be recalculated with only the current tariff.
+- Use clear period names, for example `Vibb + LNETT 2026 H1`.
+- Cover the full range from `start_time` if you want exact historical rebuilds.
 
 ## Spot price units
 
