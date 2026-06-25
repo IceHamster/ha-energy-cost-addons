@@ -1,5 +1,5 @@
 name: Energy Cost Importer
-version: "0.1.7"
+version: "0.2.0"
 slug: energy_cost_importer
 description: Import calculated electricity cost statistics for the Home Assistant Energy dashboard.
 arch:
@@ -25,6 +25,8 @@ options:
   daily_rebuild_time: "03:17"
   replace_on_start: false
   update_energy_dashboard: false
+  capacity_model_json: "{}"
+  capacity_warning_margin_kw: 0.5
   tariff_periods_json: "[]"
 schema:
   profile: str
@@ -51,4 +53,6 @@ schema:
   grid_capacity_profile: str?
   grid_capacity_monthly_nok: float?
   grid_capacity_tiers_json: str?
+  capacity_model_json: str?
+  capacity_warning_margin_kw: float?
   tariff_periods_json: str?

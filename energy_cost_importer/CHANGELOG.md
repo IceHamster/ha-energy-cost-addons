@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- Add data-driven `capacity_model_json` for grid owner capacity tariffs.
+- Support `monthly_top_n_daily_peaks`, `monthly_max_hour`, `fixed_monthly` and `disabled` capacity models.
+- Keep `grid_capacity_profile`, `grid_capacity_tiers_json` and `grid_capacity_monthly_nok` backward compatible.
+- Add capacity dashboard attributes: current tier, next tier, margin to next tier, peak days, peak values and warning level.
+
 ## 0.1.7
 
 - Add optional `tariff_periods_json` for dated tariff periods with `valid_from` and `valid_to`.

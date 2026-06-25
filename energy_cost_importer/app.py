@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from copy import deepcopy
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -15,6 +16,7 @@ REPORT_PATH = Path("/data/last_report.json")
 CORE_WS_URL = "ws://supervisor/core/websocket"
 CORE_API_URL = "http://supervisor/core/api"
 INTERNAL_TARIFF_PERIODS = "_tariff_periods"
+INTERNAL_CAPACITY_MODEL = "_capacity_model"
 
 
 PROFILE_DEFAULTS = {
@@ -48,31 +50,41 @@ BASE_TARIFF_DEFAULTS = {
     "grid_capacity_profile": "custom",
     "grid_capacity_monthly_nok": 0.0,
     "grid_capacity_tiers_json": "[]",
+    "capacity_model_json": "{}",
+    "capacity_warning_margin_kw": 0.5,
     "tariff_periods_json": "[]",
 }
 
 
-CAPACITY_TIERS = {
-    "fagne_2026": [
-        (0, 5, 360.0),
-        (5, 10, 460.0),
-        (10, 15, 560.0),
-        (15, 20, 660.0),
-        (20, 25, 760.0),
-        (25, 50, 2200.0),
-        (50, 75, 3200.0),
-        (75, 100, 4200.0),
-        (100, None, 5200.0),
-    ],
-    "lnett_2026_private": [
-        (0, 2, 150.0),
-        (2, 5, 250.0),
-        (5, 10, 400.0),
-        (10, 15, 650.0),
-        (15, 20, 900.0),
-        (20, 25, 1150.0),
-        (25, None, 1150.0),
-    ],
+BUILTIN_CAPACITY_MODELS = {
+    "fagne_2026": {
+        "type": "monthly_top_n_daily_peaks",
+        "peak_count": 3,
+        "tiers": [
+            {"label": "0-5 kW", "from_kw": 0, "to_kw": 5, "monthly_nok": 360.0},
+            {"label": "5-10 kW", "from_kw": 5, "to_kw": 10, "monthly_nok": 460.0},
+            {"label": "10-15 kW", "from_kw": 10, "to_kw": 15, "monthly_nok": 560.0},
+            {"label": "15-20 kW", "from_kw": 15, "to_kw": 20, "monthly_nok": 660.0},
+            {"label": "20-25 kW", "from_kw": 20, "to_kw": 25, "monthly_nok": 760.0},
+            {"label": "25-50 kW", "from_kw": 25, "to_kw": 50, "monthly_nok": 2200.0},
+            {"label": "50-75 kW", "from_kw": 50, "to_kw": 75, "monthly_nok": 3200.0},
+            {"label": "75-100 kW", "from_kw": 75, "to_kw": 100, "monthly_nok": 4200.0},
+            {"label": "over 100 kW", "from_kw": 100, "to_kw": None, "monthly_nok": 5200.0},
+        ],
+    },
+    "lnett_2026_private": {
+        "type": "monthly_top_n_daily_peaks",
+        "peak_count": 3,
+        "tiers": [
+            {"label": "0-2 kW", "from_kw": 0, "to_kw": 2, "monthly_nok": 150.0},
+            {"label": "2-5 kW", "from_kw": 2, "to_kw": 5, "monthly_nok": 250.0},
+            {"label": "5-10 kW", "from_kw": 5, "to_kw": 10, "monthly_nok": 400.0},
+            {"label": "10-15 kW", "from_kw": 10, "to_kw": 15, "monthly_nok": 650.0},
+            {"label": "15-20 kW", "from_kw": 15, "to_kw": 20, "monthly_nok": 900.0},
+            {"label": "20-25 kW", "from_kw": 20, "to_kw": 25, "monthly_nok": 1150.0},
+            {"label": "over 25 kW", "from_kw": 25, "to_kw": None, "monthly_nok": 1150.0},
+        ],
+    },
 }
 
 
@@ -107,12 +119,7 @@ def load_options() -> dict:
 
 
 def validate_capacity_profile(options: dict) -> None:
-    profile = options.get("grid_capacity_profile")
-    if profile not in CAPACITY_TIERS and profile != "custom":
-        raise ValueError(
-            f"Unknown grid_capacity_profile '{profile}'. "
-            f"Use one of: {', '.join(sorted(CAPACITY_TIERS))}, custom"
-        )
+    build_capacity_model(options)
 
 
 def validate_options(options: dict) -> None:
@@ -145,6 +152,17 @@ def parse_datetime(value, tz: ZoneInfo, field: str) -> datetime | None:
     return dt.astimezone(tz)
 
 
+def parse_json_option(value, default, field: str):
+    if value in (None, ""):
+        return default
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError as err:
+            raise ValueError(f"{field} must contain valid JSON") from err
+    return value
+
+
 def build_period_options(period: dict, base_options: dict) -> dict:
     options = {**base_options}
     if "profile" in period:
@@ -152,12 +170,15 @@ def build_period_options(period: dict, base_options: dict) -> dict:
         options.update(BASE_TARIFF_DEFAULTS)
         options.update(profile_defaults(profile))
     options.update(period)
+    options.pop(INTERNAL_CAPACITY_MODEL, None)
     validate_capacity_profile(options)
     return options
 
 
 def build_tariff_periods(raw_options: dict, base_options: dict) -> list[dict]:
     raw_periods = raw_options.get("tariff_periods_json", base_options.get("tariff_periods_json", "[]"))
+    if isinstance(raw_periods, str):
+        raw_periods = raw_periods.strip()
     if raw_periods in (None, "", "[]"):
         return []
     if isinstance(raw_periods, str):
@@ -268,26 +289,250 @@ def grid_energy_ledd(dt: datetime, tz: ZoneInfo, options: dict) -> float:
     return float(options["grid_night_weekend_nok_per_kwh"])
 
 
-def capacity_tier(avg_kw: float, options: dict) -> tuple[str, float]:
+def has_custom_capacity_model(options: dict) -> bool:
+    value = options.get("capacity_model_json")
+    if isinstance(value, str):
+        value = value.strip()
+    return value not in (None, "", "{}", "[]")
+
+
+def tier_label(from_kw: float, to_kw: float | None) -> str:
+    if to_kw is None:
+        return f"over {from_kw:g} kW"
+    return f"{from_kw:g}-{to_kw:g} kW"
+
+
+def normalize_capacity_tier(tier, index: int) -> dict:
+    if isinstance(tier, dict):
+        from_kw = float(tier.get("from_kw", tier.get("from", 0)))
+        to_value = tier.get("to_kw", tier.get("to"))
+        to_kw = None if to_value is None else float(to_value)
+        amount = float(tier.get("monthly_nok", tier.get("amount", 0)))
+        label = str(tier.get("label") or tier_label(from_kw, to_kw))
+    elif isinstance(tier, (list, tuple)) and len(tier) >= 3:
+        from_kw = float(tier[0])
+        to_kw = None if tier[1] is None else float(tier[1])
+        amount = float(tier[2])
+        label = tier_label(from_kw, to_kw)
+    else:
+        raise ValueError(f"capacity tier {index} must be an object or [from_kw, to_kw, monthly_nok]")
+    if to_kw is not None and to_kw <= from_kw:
+        raise ValueError(f"capacity tier {index} has to_kw <= from_kw")
+    return {
+        "label": label,
+        "from_kw": from_kw,
+        "to_kw": to_kw,
+        "monthly_nok": amount,
+    }
+
+
+def normalize_capacity_model(model: dict) -> dict:
+    if not isinstance(model, dict):
+        raise ValueError("capacity_model_json must be a JSON object")
+    model_type = str(model.get("type", "monthly_top_n_daily_peaks"))
+    normalized = {**model, "type": model_type}
+
+    if model_type in {"disabled", "fixed_monthly"}:
+        normalized["monthly_nok"] = float(model.get("monthly_nok", model.get("amount", 0.0)))
+        normalized["tiers"] = []
+        normalized["peak_count"] = int(model.get("peak_count", 0))
+        return normalized
+
+    if model_type not in {"monthly_top_n_daily_peaks", "monthly_max_hour"}:
+        raise ValueError(
+            "capacity model type must be one of: "
+            "monthly_top_n_daily_peaks, monthly_max_hour, fixed_monthly, disabled"
+        )
+
+    tiers = [normalize_capacity_tier(tier, index) for index, tier in enumerate(model.get("tiers", []))]
+    tiers.sort(key=lambda item: item["from_kw"])
+    if not tiers:
+        raise ValueError(f"capacity model {model_type} requires at least one tier")
+    for previous, current in zip(tiers, tiers[1:]):
+        if previous["to_kw"] is not None and current["from_kw"] < previous["to_kw"]:
+            raise ValueError("capacity model tiers must not overlap")
+    normalized["tiers"] = tiers
+    normalized["peak_count"] = max(int(model.get("peak_count", 3 if model_type == "monthly_top_n_daily_peaks" else 1)), 1)
+    return normalized
+
+
+def legacy_capacity_model(options: dict) -> dict:
     profile = options.get("grid_capacity_profile", "custom")
-    if profile == "custom":
-        custom_tiers = json.loads(options.get("grid_capacity_tiers_json", "[]") or "[]")
-        for tier in custom_tiers:
-            lower, upper, amount = tier
-            lower = float(lower)
-            amount = float(amount)
-            if upper is None and avg_kw >= lower:
-                return f"over {lower:g} kW", amount
-            if upper is not None and lower <= avg_kw < float(upper):
-                return f"{lower:g}-{float(upper):g} kW", amount
-        return "custom", float(options.get("grid_capacity_monthly_nok", 0.0))
-    tiers = CAPACITY_TIERS[profile]
-    for lower, upper, amount in tiers:
-        if upper is None and avg_kw >= lower:
-            return f"over {lower} kW", amount
-        if upper is not None and lower <= avg_kw < upper:
-            return f"{lower}-{upper} kW", amount
-    return "unknown", 0.0
+    if profile in BUILTIN_CAPACITY_MODELS:
+        return deepcopy(BUILTIN_CAPACITY_MODELS[profile])
+    if profile != "custom":
+        raise ValueError(
+            f"Unknown grid_capacity_profile '{profile}'. "
+            f"Use one of: {', '.join(sorted(BUILTIN_CAPACITY_MODELS))}, custom"
+        )
+
+    custom_tiers = parse_json_option(options.get("grid_capacity_tiers_json", "[]"), [], "grid_capacity_tiers_json")
+    if custom_tiers:
+        return {
+            "type": "monthly_top_n_daily_peaks",
+            "peak_count": 3,
+            "tiers": custom_tiers,
+        }
+
+    fixed_monthly = float(options.get("grid_capacity_monthly_nok", 0.0))
+    if fixed_monthly:
+        return {"type": "fixed_monthly", "monthly_nok": fixed_monthly}
+    return {"type": "disabled", "monthly_nok": 0.0}
+
+
+def build_capacity_model(options: dict) -> dict:
+    if INTERNAL_CAPACITY_MODEL in options:
+        return options[INTERNAL_CAPACITY_MODEL]
+    if has_custom_capacity_model(options):
+        raw_model = parse_json_option(options.get("capacity_model_json"), {}, "capacity_model_json")
+    else:
+        raw_model = legacy_capacity_model(options)
+    model = normalize_capacity_model(raw_model)
+    options[INTERNAL_CAPACITY_MODEL] = model
+    return model
+
+
+def select_capacity_tier(value_kw: float, model: dict) -> tuple[dict | None, dict | None]:
+    tiers = model.get("tiers", [])
+    current = None
+    next_tier = None
+    for tier in tiers:
+        lower = float(tier["from_kw"])
+        upper = tier["to_kw"]
+        if value_kw >= lower and (upper is None or value_kw < float(upper)):
+            current = tier
+            continue
+        if value_kw < lower and next_tier is None:
+            next_tier = tier
+    if current is None and tiers:
+        current = tiers[-1]
+    if current:
+        for tier in tiers:
+            if tier["from_kw"] > current["from_kw"]:
+                next_tier = tier
+                break
+    return current, next_tier
+
+
+def warning_level(margin_kw: float | None, model: dict) -> str:
+    if margin_kw is None:
+        return "at_highest_tier"
+    margin = float(model.get("warning_margin_kw", model.get("capacity_warning_margin_kw", 0.5)))
+    if margin_kw <= 0:
+        return "over_next_tier"
+    if margin_kw <= margin:
+        return "near_next_tier"
+    return "ok"
+
+
+def capacity_result_for_model(model: dict, day_peaks: dict, hourly_peaks: list[dict], options: dict) -> dict:
+    model_type = model["type"]
+    if model_type == "disabled":
+        return {
+            "capacity_model_type": "disabled",
+            "capacity_metric_kw": 0.0,
+            "capacity_peak_count": 0,
+            "capacity_peak_days": [],
+            "capacity_peak_values_kw": [],
+            "capacity_tier": "disabled",
+            "capacity_current_tier": "disabled",
+            "capacity_current_tier_min_kw": None,
+            "capacity_current_tier_max_kw": None,
+            "capacity_next_tier": "",
+            "capacity_next_threshold_kw": None,
+            "capacity_margin_to_next_kw": None,
+            "capacity_over_tier_min_kw": 0.0,
+            "capacity_cost": 0.0,
+            "capacity_warning_level": "disabled",
+        }
+    if model_type == "fixed_monthly":
+        amount = float(model.get("monthly_nok", 0.0))
+        return {
+            "capacity_model_type": "fixed_monthly",
+            "capacity_metric_kw": 0.0,
+            "capacity_peak_count": 0,
+            "capacity_peak_days": [],
+            "capacity_peak_values_kw": [],
+            "capacity_tier": "fixed",
+            "capacity_current_tier": "fixed",
+            "capacity_current_tier_min_kw": None,
+            "capacity_current_tier_max_kw": None,
+            "capacity_next_tier": "",
+            "capacity_next_threshold_kw": None,
+            "capacity_margin_to_next_kw": None,
+            "capacity_over_tier_min_kw": 0.0,
+            "capacity_cost": amount,
+            "capacity_warning_level": "fixed",
+        }
+
+    peak_count = int(model.get("peak_count", 3))
+    if model_type == "monthly_top_n_daily_peaks":
+        peaks = sorted(day_peaks.values(), key=lambda item: item["kw"], reverse=True)[:peak_count]
+        metric_kw = sum(item["kw"] for item in peaks) / len(peaks) if peaks else 0.0
+    else:
+        peaks = sorted(hourly_peaks, key=lambda item: item["kw"], reverse=True)[:1]
+        metric_kw = peaks[0]["kw"] if peaks else 0.0
+
+    current, next_tier = select_capacity_tier(metric_kw, model)
+    current_min = current["from_kw"] if current else None
+    current_max = current["to_kw"] if current else None
+    next_threshold = next_tier["from_kw"] if next_tier else None
+    margin = max(float(next_threshold) - metric_kw, 0.0) if next_threshold is not None else None
+    over_min = max(metric_kw - float(current_min), 0.0) if current_min is not None else 0.0
+    return {
+        "capacity_model_type": model_type,
+        "capacity_metric_kw": metric_kw,
+        "capacity_peak_count": peak_count,
+        "capacity_peak_days": [item["date"] for item in peaks],
+        "capacity_peak_values_kw": [round(float(item["kw"]), 3) for item in peaks],
+        "capacity_tier": current["label"] if current else "unknown",
+        "capacity_current_tier": current["label"] if current else "unknown",
+        "capacity_current_tier_min_kw": current_min,
+        "capacity_current_tier_max_kw": current_max,
+        "capacity_next_tier": next_tier["label"] if next_tier else "",
+        "capacity_next_threshold_kw": next_threshold,
+        "capacity_margin_to_next_kw": margin,
+        "capacity_over_tier_min_kw": over_min,
+        "capacity_cost": float(current["monthly_nok"]) if current else 0.0,
+        "capacity_warning_level": warning_level(margin, {**options, **model}),
+    }
+
+
+def merge_capacity_results(results: list[dict], prorated_cost: float) -> dict:
+    if not results:
+        return capacity_result_for_model({"type": "disabled"}, {}, [], {})
+    unique = lambda key: [str(item[key]) for item in results if item.get(key) not in (None, "")]
+    margins = [item["capacity_margin_to_next_kw"] for item in results if item.get("capacity_margin_to_next_kw") is not None]
+    next_candidates = [item for item in results if item.get("capacity_margin_to_next_kw") is not None]
+    next_item = min(next_candidates, key=lambda item: item["capacity_margin_to_next_kw"]) if next_candidates else {}
+    metric = max(float(item.get("capacity_metric_kw", 0.0)) for item in results)
+    return {
+        "capacity_model_type": " / ".join(dict.fromkeys(unique("capacity_model_type"))),
+        "capacity_metric_kw": metric,
+        "capacity_peak_count": max(int(item.get("capacity_peak_count", 0)) for item in results),
+        "capacity_peak_days": results[0].get("capacity_peak_days", []),
+        "capacity_peak_values_kw": results[0].get("capacity_peak_values_kw", []),
+        "capacity_tier": " / ".join(dict.fromkeys(unique("capacity_tier"))) or "unknown",
+        "capacity_current_tier": " / ".join(dict.fromkeys(unique("capacity_current_tier"))) or "unknown",
+        "capacity_current_tier_min_kw": min(
+            (item["capacity_current_tier_min_kw"] for item in results if item.get("capacity_current_tier_min_kw") is not None),
+            default=None,
+        ),
+        "capacity_current_tier_max_kw": max(
+            (item["capacity_current_tier_max_kw"] for item in results if item.get("capacity_current_tier_max_kw") is not None),
+            default=None,
+        ),
+        "capacity_next_tier": next_item.get("capacity_next_tier", ""),
+        "capacity_next_threshold_kw": next_item.get("capacity_next_threshold_kw"),
+        "capacity_margin_to_next_kw": min(margins) if margins else None,
+        "capacity_over_tier_min_kw": max(float(item.get("capacity_over_tier_min_kw", 0.0)) for item in results),
+        "capacity_cost": prorated_cost,
+        "capacity_warning_level": (
+            "near_next_tier"
+            if any(item.get("capacity_warning_level") == "near_next_tier" for item in results)
+            else results[0].get("capacity_warning_level", "ok")
+        ),
+    }
 
 
 def tariff_at(dt: datetime, options: dict) -> tuple[dict, str]:
@@ -350,7 +595,8 @@ def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -
     tz = ZoneInfo(options["timezone"])
     sorted_spot = build_spot_rows(spot_rows, options)
     clean_rows = []
-    daily_max_by_month = defaultdict(lambda: defaultdict(float))
+    daily_peak_by_month = defaultdict(dict)
+    hourly_peaks_by_month = defaultdict(list)
 
     for row in sorted(energy_rows, key=lambda item: item["start"]):
         change = row.get("change")
@@ -358,35 +604,34 @@ def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -
             continue
         kwh = max(float(change), 0.0)
         start = datetime.fromtimestamp(row["start"] / 1000, tz=tz)
+        key = month_key(start, tz)
         clean_rows.append((int(row["start"]), start, kwh))
-        daily_max_by_month[month_key(start, tz)][start.date()] = max(
-            daily_max_by_month[month_key(start, tz)][start.date()],
-            kwh,
-        )
+        hourly_peaks_by_month[key].append({"date": start.isoformat(), "kw": kwh})
+        date_key = start.date().isoformat()
+        if kwh >= daily_peak_by_month[key].get(date_key, {"kw": -1.0})["kw"]:
+            daily_peak_by_month[key][date_key] = {"date": date_key, "kw": kwh}
 
     monthly_fixed = {}
-    for key, day_peaks in daily_max_by_month.items():
+    for key, day_peaks in daily_peak_by_month.items():
         month_start, month_end = month_bounds(key, tz)
         month_seconds = (month_end - month_start).total_seconds()
-        top_three = sorted(day_peaks.values(), reverse=True)[:3]
-        avg_kw = sum(top_three) / len(top_three) if top_three else 0.0
         capacity_cost = 0.0
         provider_fixed = 0.0
-        tier_names = []
+        capacity_results = []
         tariff_names = []
         for tariff, tariff_name, seconds in tariff_slices_for_range(month_start, month_end, options):
             fraction = seconds / month_seconds if month_seconds else 0.0
-            tier_name, tier_cost = capacity_tier(avg_kw, tariff)
-            capacity_cost += tier_cost * fraction
+            model = build_capacity_model(tariff)
+            capacity = capacity_result_for_model(model, day_peaks, hourly_peaks_by_month[key], tariff)
+            capacity_cost += capacity["capacity_cost"] * fraction
             provider_fixed += float(tariff["provider_monthly_nok"]) * fraction
-            if tier_name not in tier_names:
-                tier_names.append(tier_name)
+            capacity_results.append(capacity)
             if tariff_name not in tariff_names:
                 tariff_names.append(tariff_name)
+        capacity_summary = merge_capacity_results(capacity_results, capacity_cost)
         monthly_fixed[key] = {
-            "top_three_avg_kw": avg_kw,
-            "capacity_tier": " / ".join(tier_names) if tier_names else "unknown",
-            "capacity_cost": capacity_cost,
+            **capacity_summary,
+            "top_three_avg_kw": capacity_summary["capacity_metric_kw"],
             "provider_fixed": provider_fixed,
             "fixed_total": capacity_cost + provider_fixed,
             "quota_limit": quota_limit_for_month(month_start, month_end, options),
@@ -489,6 +734,12 @@ def rounded(value: float, digits: int = 0) -> float:
     return round(float(value), digits)
 
 
+def rounded_or_none(value, digits: int = 2) -> float | None:
+    if value is None:
+        return None
+    return rounded(value, digits)
+
+
 def monthly_cost_attributes(options: dict, summary: dict, now: datetime) -> dict:
     tz = ZoneInfo(options["timezone"])
     current_day = summary["days"].get(day_key(now, tz), empty_cost_summary())
@@ -521,6 +772,20 @@ def monthly_cost_attributes(options: dict, summary: dict, now: datetime) -> dict
         "spot_kwh": rounded(current_month["spot_kwh"], 1),
         "capacity_tier": current_month.get("capacity_tier", "unknown"),
         "top_three_avg_kw": rounded(current_month.get("top_three_avg_kw", 0.0), 2),
+        "capacity_model_type": current_month.get("capacity_model_type", ""),
+        "capacity_current_tier": current_month.get("capacity_current_tier", current_month.get("capacity_tier", "unknown")),
+        "capacity_current_tier_min_kw": rounded_or_none(current_month.get("capacity_current_tier_min_kw"), 2),
+        "capacity_current_tier_max_kw": rounded_or_none(current_month.get("capacity_current_tier_max_kw"), 2),
+        "capacity_next_tier": current_month.get("capacity_next_tier", ""),
+        "capacity_next_threshold_kw": rounded_or_none(current_month.get("capacity_next_threshold_kw"), 2),
+        "capacity_margin_to_next_kw": rounded_or_none(current_month.get("capacity_margin_to_next_kw"), 2),
+        "capacity_over_tier_min_kw": rounded_or_none(current_month.get("capacity_over_tier_min_kw"), 2),
+        "capacity_metric_kw": rounded(current_month.get("capacity_metric_kw", 0.0), 2),
+        "capacity_monthly_cost": rounded(current_month.get("capacity_cost", 0.0), 0),
+        "capacity_peak_count": int(current_month.get("capacity_peak_count", 0)),
+        "capacity_peak_days": current_month.get("capacity_peak_days", []),
+        "capacity_peak_values_kw": current_month.get("capacity_peak_values_kw", []),
+        "capacity_warning_level": current_month.get("capacity_warning_level", ""),
         "tariff_periods": current_month.get("tariff_periods", ""),
     }
 

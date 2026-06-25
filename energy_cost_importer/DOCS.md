@@ -40,6 +40,12 @@ When `monthly_cost_entity` is a `sensor.*`, the sensor state is the estimated to
 - `quota_left_kwh`, `norgespris_used_kwh`, `above_quota_kwh` and `spot_kwh`: quota status.
 - `month_power_cost`, `month_grid_energy_cost`, `month_fixed_cost`, `month_capacity_cost`, `month_provider_fixed_cost` and `month_provider_markup_cost`: cost components.
 - `tariff_periods`: active tariff period name(s) for the current month.
+- `capacity_model_type`: capacity model used for the current month.
+- `capacity_current_tier`: current capacity tier label.
+- `capacity_next_tier`: next capacity tier label, if any.
+- `capacity_margin_to_next_kw`: kW margin before the next capacity tier.
+- `capacity_peak_days` and `capacity_peak_values_kw`: the peaks used by the capacity model.
+- `capacity_warning_level`: `ok`, `near_next_tier`, `at_highest_tier`, `fixed` or `disabled`.
 
 Recommended dashboard pattern:
 
@@ -120,6 +126,7 @@ When `tariff_periods_json` is configured, the add-on chooses the active tariff p
 - Fields inside a period override the top-level config.
 - A period can set its own `profile`; profile defaults are then applied before the period-specific overrides.
 - Monthly provider fixed cost and grid capacity cost are prorated if a period starts or ends mid-month.
+- Capacity model fields can be set inside each tariff period if the grid owner's steps or calculation method change.
 
 Example with one open-ended Vibb + LNETT period:
 
@@ -229,6 +236,112 @@ Built-in grid capacity profiles:
 - `fagne_2026`
 - `lnett_2026_private`
 - `custom`
+
+## Capacity models
+
+Grid owners can have different capacity tariff steps and sometimes different calculation methods. The recommended generic configuration is `capacity_model_json`. It can be used at the top level or inside a tariff period.
+
+The old options are still supported:
+
+- `grid_capacity_profile`
+- `grid_capacity_tiers_json`
+- `grid_capacity_monthly_nok`
+
+If `capacity_model_json` is set, it takes precedence over those old options.
+
+### Monthly top N daily peaks
+
+Use this for grid owners where the capacity tier is based on the average of the highest daily maximum hourly consumptions in the month. This covers the LNETT/Fagne-style model.
+
+```yaml
+capacity_model_json: >
+  {
+    "type": "monthly_top_n_daily_peaks",
+    "peak_count": 3,
+    "tiers": [
+      {"label": "0-2 kW", "from_kw": 0, "to_kw": 2, "monthly_nok": 150},
+      {"label": "2-5 kW", "from_kw": 2, "to_kw": 5, "monthly_nok": 250},
+      {"label": "5-10 kW", "from_kw": 5, "to_kw": 10, "monthly_nok": 400},
+      {"label": "10-15 kW", "from_kw": 10, "to_kw": 15, "monthly_nok": 650},
+      {"label": "15-20 kW", "from_kw": 15, "to_kw": 20, "monthly_nok": 900},
+      {"label": "20-25 kW", "from_kw": 20, "to_kw": 25, "monthly_nok": 1150},
+      {"label": "over 25 kW", "from_kw": 25, "to_kw": null, "monthly_nok": 1150}
+    ]
+  }
+```
+
+### Monthly max hour
+
+Use this for grid owners where the capacity tier is based on the single highest hourly consumption in the month.
+
+```yaml
+capacity_model_json: >
+  {
+    "type": "monthly_max_hour",
+    "tiers": [
+      {"label": "0-5 kW", "from_kw": 0, "to_kw": 5, "monthly_nok": 200},
+      {"label": "5-10 kW", "from_kw": 5, "to_kw": 10, "monthly_nok": 350},
+      {"label": "over 10 kW", "from_kw": 10, "to_kw": null, "monthly_nok": 600}
+    ]
+  }
+```
+
+### Fixed monthly capacity amount
+
+Use this when the grid owner has a fixed monthly amount and no capacity tier calculation.
+
+```yaml
+capacity_model_json: >
+  {
+    "type": "fixed_monthly",
+    "monthly_nok": 199
+  }
+```
+
+### Disabled capacity calculation
+
+Use this when capacity cost should not be included.
+
+```yaml
+capacity_model_json: >
+  {
+    "type": "disabled"
+  }
+```
+
+### Best practice for grid owners
+
+- Put the grid owner's steps in `capacity_model_json` instead of modifying Python code.
+- Put `capacity_model_json` inside `tariff_periods_json` when steps change by date.
+- Keep old tariff periods if `replace_on_start: true` is enabled.
+- Use clear tier labels matching the grid owner's price list.
+- Verify whether the grid owner uses top daily peaks, one monthly max hour, fixed amount or another model before configuring.
+- Do not assume all Norwegian grid owners use the LNETT/Fagne model.
+
+Example inside a tariff period:
+
+```yaml
+tariff_periods_json: >
+  [
+    {
+      "name": "Grid owner 2026",
+      "valid_from": "2026-01-01T00:00:00+01:00",
+      "valid_to": null,
+      "profile": "custom",
+      "provider_monthly_nok": 49,
+      "grid_day_nok_per_kwh": 0.42,
+      "grid_night_weekend_nok_per_kwh": 0.27,
+      "capacity_model_json": {
+        "type": "monthly_top_n_daily_peaks",
+        "peak_count": 3,
+        "tiers": [
+          {"label": "0-5 kW", "from_kw": 0, "to_kw": 5, "monthly_nok": 200},
+          {"label": "5-10 kW", "from_kw": 5, "to_kw": 10, "monthly_nok": 350}
+        ]
+      }
+    }
+  ]
+```
 
 ## Installation
 
