@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4
+
+- Add optional `monthly_cost_entity` for updating an `input_number` helper with current month cost.
+
 ## 0.1.3
 
 - Start the Python process through `with-contenv` so Home Assistant app environment variables, including `SUPERVISOR_TOKEN`, are available.

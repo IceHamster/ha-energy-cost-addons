@@ -13,6 +13,36 @@ The app can also point the Energy dashboard to the calculated cost statistic.
 
 The add-on must be configured before first start. The default options intentionally use empty entity IDs so a generic install cannot accidentally change your Energy dashboard.
 
+If `monthly_cost_entity` points to an `input_number`, the add-on updates that helper with the current month cost after every import. This is useful for simple dashboard cards.
+
+## What you need to create in Home Assistant
+
+Before starting the add-on, Home Assistant must already have:
+
+- An energy consumption sensor with long-term statistics, normally `state_class: total_increasing`, unit `kWh`, and `device_class: energy`.
+- A spot price sensor with long-term statistics.
+- Optional: an `input_number` helper if you want the add-on to expose current month cost as a normal dashboard entity.
+
+Recommended helper for current month cost:
+
+1. Go to Settings -> Devices & services -> Helpers.
+2. Create helper -> Number.
+3. Name: `Hytte strøm kostnad denne måneden` or `Power cost this month`.
+4. Minimum: `0`.
+5. Maximum: for example `100000`.
+6. Step: `1`.
+7. Display mode: `Input field`.
+8. Unit of measurement: `kr` or your local currency.
+9. Icon: `mdi:cash`.
+
+Use the created helper entity as `monthly_cost_entity`, for example:
+
+```yaml
+monthly_cost_entity: input_number.hytte_strom_kostnad_denne_maneden
+```
+
+You can then show that helper on a normal dashboard card. The add-on writes the rounded current-month cost into the helper after each import.
+
 ## Example: Haugaland Kraft Hyttekraft and Fagne
 
 ```yaml
@@ -22,11 +52,17 @@ spot_entity: sensor.nordpool_kwh_no2_nok_1_10_025
 spot_price_unit: ore_per_kwh
 spot_price_multiplier_to_nok_per_kwh: 0.01
 cost_statistic_id: energy_cost_importer:hytte_total
+cost_source: energy_cost_importer
+monthly_cost_entity: input_number.hytte_strom_kostnad_denne_maneden
 start_time: "2026-01-01T00:00:00+01:00"
+timezone: Europe/Oslo
 update_interval_minutes: 60
 daily_rebuild_time: "03:17"
 replace_on_start: false
 update_energy_dashboard: true
+norgespris_enabled: true
+norgespris_limit_kwh: 1000
+norgespris_nok_per_kwh: 0.50
 ```
 
 ## Example: Vibb and LNETT
@@ -38,6 +74,7 @@ spot_entity: sensor.nordpool
 spot_price_unit: ore_per_kwh
 spot_price_multiplier_to_nok_per_kwh: 0.01
 cost_statistic_id: energy_cost_importer:vibb_lnett_total
+monthly_cost_entity: input_number.monthly_power_cost
 start_time: "2026-01-01T00:00:00+01:00"
 update_interval_minutes: 60
 daily_rebuild_time: "03:17"

@@ -375,6 +375,25 @@ async def import_costs(options: dict, replace: bool) -> None:
                 },
             )
 
+        monthly_cost_entity = str(options.get("monthly_cost_entity", "")).strip()
+        if monthly_cost_entity:
+            tz = ZoneInfo(options["timezone"])
+            current_key = month_key(datetime.now(tz), tz)
+            current_month = summary["months"].get(current_key)
+            if current_month:
+                await send_command(
+                    ws,
+                    7,
+                    {
+                        "type": "call_service",
+                        "domain": "input_number",
+                        "service": "set_value",
+                        "target": {"entity_id": monthly_cost_entity},
+                        "service_data": {"value": round(float(current_month["total"]), 0)},
+                    },
+                )
+                log(f"Updated {monthly_cost_entity} to {current_month['total']:.0f} NOK")
+
     finally:
         await ws.close()
 

@@ -1,5 +1,5 @@
 name: Energy Cost Importer
-version: "0.1.3"
+version: "0.1.4"
 slug: energy_cost_importer
 description: Import calculated electricity cost statistics for the Home Assistant Energy dashboard.
 arch:
@@ -18,6 +18,7 @@ options:
   spot_price_multiplier_to_nok_per_kwh: 0.01
   cost_statistic_id: energy_cost_importer:total
   cost_source: energy_cost_importer
+  monthly_cost_entity: ""
   start_time: "2026-01-01T00:00:00+01:00"
   timezone: Europe/Oslo
   update_interval_minutes: 60
@@ -32,6 +33,7 @@ schema:
   spot_price_multiplier_to_nok_per_kwh: float
   cost_statistic_id: str
   cost_source: str
+  monthly_cost_entity: str?
   start_time: str
   timezone: str
   update_interval_minutes: int(15,1440)
