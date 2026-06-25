@@ -4,6 +4,7 @@ import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib import request
 from zoneinfo import ZoneInfo
 
 import websockets
@@ -12,6 +13,7 @@ import websockets
 OPTIONS_PATH = Path("/data/options.json")
 REPORT_PATH = Path("/data/last_report.json")
 CORE_WS_URL = "ws://supervisor/core/websocket"
+CORE_API_URL = "http://supervisor/core/api"
 
 
 PROFILE_DEFAULTS = {
@@ -110,6 +112,9 @@ def validate_options(options: dict) -> None:
     statistic_id = str(options.get("cost_statistic_id", "")).strip()
     if ":" not in statistic_id:
         raise ValueError("cost_statistic_id must be an external statistic id, for example energy_cost_importer:total")
+    monthly_cost_entity = str(options.get("monthly_cost_entity", "")).strip()
+    if monthly_cost_entity and not monthly_cost_entity.startswith(("sensor.", "input_number.")):
+        raise ValueError("monthly_cost_entity must be a sensor.* or input_number.* entity_id")
 
 
 def month_key(dt: datetime, tz: ZoneInfo) -> str:
@@ -286,6 +291,21 @@ async def connect():
     return ws
 
 
+def set_core_state(entity_id: str, state: float, attributes: dict) -> None:
+    payload = json.dumps({"state": round(state, 0), "attributes": attributes}).encode()
+    req = request.Request(
+        f"{CORE_API_URL}/states/{entity_id}",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {os.environ['SUPERVISOR_TOKEN']}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with request.urlopen(req, timeout=10) as response:
+        response.read()
+
+
 async def import_costs(options: dict, replace: bool) -> None:
     energy_id = options["energy_entity"]
     spot_id = options["spot_entity"]
@@ -381,17 +401,31 @@ async def import_costs(options: dict, replace: bool) -> None:
             current_key = month_key(datetime.now(tz), tz)
             current_month = summary["months"].get(current_key)
             if current_month:
-                await send_command(
-                    ws,
-                    7,
-                    {
-                        "type": "call_service",
-                        "domain": "input_number",
-                        "service": "set_value",
-                        "target": {"entity_id": monthly_cost_entity},
-                        "service_data": {"value": round(float(current_month["total"]), 0)},
-                    },
-                )
+                current_month_cost = round(float(current_month["total"]), 0)
+                if monthly_cost_entity.startswith("input_number."):
+                    await send_command(
+                        ws,
+                        7,
+                        {
+                            "type": "call_service",
+                            "domain": "input_number",
+                            "service": "set_value",
+                            "target": {"entity_id": monthly_cost_entity},
+                            "service_data": {"value": current_month_cost},
+                        },
+                    )
+                else:
+                    await asyncio.to_thread(
+                        set_core_state,
+                        monthly_cost_entity,
+                        current_month_cost,
+                        {
+                            "friendly_name": "Power cost this month",
+                            "unit_of_measurement": "NOK",
+                            "device_class": "monetary",
+                            "icon": "mdi:cash",
+                        },
+                    )
                 log(f"Updated {monthly_cost_entity} to {current_month['total']:.0f} NOK")
 
     finally:

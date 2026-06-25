@@ -1,5 +1,5 @@
 name: Energy Cost Importer
-version: "0.1.4"
+version: "0.1.5"
 slug: energy_cost_importer
 description: Import calculated electricity cost statistics for the Home Assistant Energy dashboard.
 arch:

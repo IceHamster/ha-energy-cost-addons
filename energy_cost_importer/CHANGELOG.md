@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.5
+
+- Allow `monthly_cost_entity` to be a non-editable `sensor.*` entity.
+- Keep `input_number.*` support for existing installations.
+
 ## 0.1.4
 
 - Add optional `monthly_cost_entity` for updating an `input_number` helper with current month cost.

@@ -21,9 +21,17 @@ Before starting the add-on, Home Assistant must already have:
 
 - An energy consumption sensor with long-term statistics, normally `state_class: total_increasing`, unit `kWh`, and `device_class: energy`.
 - A spot price sensor with long-term statistics.
-- Optional: an `input_number` helper if you want the add-on to expose current month cost as a normal dashboard entity.
+- Optional: a `sensor.*` entity name for current month cost. The add-on creates/updates this sensor state automatically.
 
-Recommended helper for current month cost:
+Recommended current month cost sensor:
+
+```yaml
+monthly_cost_entity: sensor.hytte_stromkostnad_denne_maneden
+```
+
+The add-on creates/updates this sensor through the Home Assistant API. It is not editable from the UI, which is preferred for dashboard display.
+
+Legacy alternative:
 
 1. Go to Settings -> Devices & services -> Helpers.
 2. Create helper -> Number.
@@ -41,7 +49,7 @@ Use the created helper entity as `monthly_cost_entity`, for example:
 monthly_cost_entity: input_number.hytte_strom_kostnad_denne_maneden
 ```
 
-You can then show that helper on a normal dashboard card. The add-on writes the rounded current-month cost into the helper after each import.
+This works, but it is editable by users. Prefer a `sensor.*` entity unless you specifically want manual override.
 
 ## Example: Haugaland Kraft Hyttekraft and Fagne
 
@@ -53,7 +61,7 @@ spot_price_unit: ore_per_kwh
 spot_price_multiplier_to_nok_per_kwh: 0.01
 cost_statistic_id: energy_cost_importer:hytte_total
 cost_source: energy_cost_importer
-monthly_cost_entity: input_number.hytte_strom_kostnad_denne_maneden
+monthly_cost_entity: sensor.hytte_stromkostnad_denne_maneden
 start_time: "2026-01-01T00:00:00+01:00"
 timezone: Europe/Oslo
 update_interval_minutes: 60
