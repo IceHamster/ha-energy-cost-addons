@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.5
+
+- Apply Elvia's January–June and July–December 2026 energy and capacity prices automatically.
+- Correct BKK/Eviny 2025 energy prices for January–March, April–August, September and October–December, and capacity prices before September.
+- Fetch previous-month consumption for capacity calculations without importing costs or using quota for those extra rows.
+- Refuse imports with missing or partial previous-month capacity history, preserving existing cost statistics.
+- Remove the unverified LNETT capacity tier at and above 25 kW; require verified custom prices for usage outside published tiers.
+- Restrict year-specific grid presets to their verified year and document official sources checked on 2026-11-06.
+- Preserve manual energy and capacity overrides when applying historical defaults and dated supplier changes.
+- Add offline regression tests for historical billing, capacity history, daylight-saving changes and import safety.
+
 ## 0.2.4
 
 - Pin the Home Assistant base image to `3.24-2026.10.3`.

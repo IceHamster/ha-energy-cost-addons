@@ -8,15 +8,14 @@ from pathlib import Path
 from urllib import request
 from zoneinfo import ZoneInfo
 
-import websockets
-
-
 OPTIONS_PATH = Path("/data/options.json")
 REPORT_PATH = Path("/data/last_report.json")
 CORE_WS_URL = "ws://supervisor/core/websocket"
 CORE_API_URL = "http://supervisor/core/api"
 INTERNAL_TARIFF_PERIODS = "_tariff_periods"
 INTERNAL_CAPACITY_MODEL = "_capacity_model"
+INTERNAL_GRID_ENERGY_OVERRIDES = "_grid_energy_overrides"
+INTERNAL_BUILTIN_GRID_RATES = "_builtin_grid_rates"
 
 
 PROFILE_DEFAULTS = {
@@ -86,7 +85,6 @@ BUILTIN_CAPACITY_MODELS = {
             {"label": "10-15 kW", "from_kw": 10, "to_kw": 15, "monthly_nok": 650.0},
             {"label": "15-20 kW", "from_kw": 15, "to_kw": 20, "monthly_nok": 900.0},
             {"label": "20-25 kW", "from_kw": 20, "to_kw": 25, "monthly_nok": 1150.0},
-            {"label": "over 25 kW", "from_kw": 25, "to_kw": None, "monthly_nok": 1150.0},
         ],
     },
     "elvia_2026_private": {
@@ -125,6 +123,21 @@ BUILTIN_CAPACITY_MODELS = {
 }
 
 
+# BKK's capacity steps changed on 2025-09-01; Elvia's on 2026-07-01.
+# Sources and the last verification date are recorded in DOCS.md.
+BUILTIN_CAPACITY_MODELS["bkk_2025_private"] = deepcopy(BUILTIN_CAPACITY_MODELS["bkk_2026_private"])
+BUILTIN_CAPACITY_SEASONS = {
+    "elvia_2026_private": {
+        "months": [1, 2, 3, 4, 5, 6],
+        "monthly_nok": [125, 190, 300, 410, 520, 630, 1175, 1720, 2270, 4570],
+    },
+    "bkk_2025_private": {
+        "months": [1, 2, 3, 4, 5, 6, 7, 8],
+        "monthly_nok": [160, 260, 430, 620, 800, 975, 1870, 2760, 3650, 7200],
+    },
+}
+
+
 GRID_TARIFF_DEFAULTS = {
     "fagne_2026_private": {
         "grid_day_nok_per_kwh": 0.4516,
@@ -141,7 +154,9 @@ GRID_TARIFF_DEFAULTS = {
     "elvia_2026_private": {
         "grid_day_nok_per_kwh": 0.4640,
         "grid_night_weekend_nok_per_kwh": 0.3140,
-        "grid_energy_rates_json": "[]",
+        "grid_energy_rates_json": [
+            {"months": [1, 2, 3, 4, 5, 6], "grid_day_nok_per_kwh": 0.3640, "grid_night_weekend_nok_per_kwh": 0.2640},
+        ],
         "grid_capacity_profile": "elvia_2026_private",
     },
     "bkk_2026_private": {
@@ -160,18 +175,40 @@ GRID_TARIFF_DEFAULTS = {
         "grid_day_nok_per_kwh": 0.5287,
         "grid_night_weekend_nok_per_kwh": 0.4065,
         "grid_energy_rates_json": [
-            {"months": [10, 11, 12], "grid_day_nok_per_kwh": 0.5287, "grid_night_weekend_nok_per_kwh": 0.4065},
+            {"months": [1, 2, 3], "grid_day_nok_per_kwh": 0.5094, "grid_night_weekend_nok_per_kwh": 0.3821},
+            {"months": [4, 5, 6, 7, 8], "grid_day_nok_per_kwh": 0.5986, "grid_night_weekend_nok_per_kwh": 0.4713},
+            {"months": [9], "grid_day_nok_per_kwh": 0.5837, "grid_night_weekend_nok_per_kwh": 0.4615},
         ],
-        "grid_capacity_profile": "bkk_2026_private",
+        "grid_capacity_profile": "bkk_2025_private",
     },
     "eviny_bkk_2025_private": {
         "grid_day_nok_per_kwh": 0.5287,
         "grid_night_weekend_nok_per_kwh": 0.4065,
         "grid_energy_rates_json": [
-            {"months": [10, 11, 12], "grid_day_nok_per_kwh": 0.5287, "grid_night_weekend_nok_per_kwh": 0.4065},
+            {"months": [1, 2, 3], "grid_day_nok_per_kwh": 0.5094, "grid_night_weekend_nok_per_kwh": 0.3821},
+            {"months": [4, 5, 6, 7, 8], "grid_day_nok_per_kwh": 0.5986, "grid_night_weekend_nok_per_kwh": 0.4713},
+            {"months": [9], "grid_day_nok_per_kwh": 0.5837, "grid_night_weekend_nok_per_kwh": 0.4615},
         ],
-        "grid_capacity_profile": "bkk_2026_private",
+        "grid_capacity_profile": "bkk_2025_private",
     },
+}
+
+
+GRID_TARIFF_YEARS = {
+    "fagne_2026_private": 2026,
+    "lnett_2026_private": 2026,
+    "elvia_2026_private": 2026,
+    "bkk_2026_private": 2026,
+    "eviny_bkk_2026_private": 2026,
+    "bkk_2025_private": 2025,
+    "eviny_bkk_2025_private": 2025,
+}
+GRID_CAPACITY_YEARS = {
+    "fagne_2026": 2026,
+    "lnett_2026_private": 2026,
+    "elvia_2026_private": 2026,
+    "bkk_2026_private": 2026,
+    "bkk_2025_private": 2025,
 }
 
 
@@ -204,7 +241,7 @@ def grid_tariff_defaults(profile: str) -> dict:
 def resolve_options(raw_options: dict) -> dict:
     profile = raw_options.get("profile", "custom")
     options = {**BASE_TARIFF_DEFAULTS, **profile_defaults(profile)}
-    grid_profile = raw_options.get("grid_tariff_profile", options.get("grid_tariff_profile", ""))
+    grid_profile = raw_options.get("grid_tariff_profile") or options.get("grid_tariff_profile", "")
     grid_defaults = grid_tariff_defaults(grid_profile)
     options.update(grid_defaults)
     raw_overrides = {**raw_options}
@@ -215,7 +252,22 @@ def resolve_options(raw_options: dict) -> dict:
     ):
         raw_overrides.pop("grid_energy_rates_json", None)
     options.update(raw_overrides)
+    options["grid_tariff_profile"] = grid_profile
+    configure_grid_energy_overrides(options, raw_overrides, bool(grid_defaults))
     return options
+
+
+def configure_grid_energy_overrides(options: dict, overrides: dict, new_grid: bool = False) -> None:
+    if new_grid:
+        options[INTERNAL_GRID_ENERGY_OVERRIDES] = {}
+        options[INTERNAL_BUILTIN_GRID_RATES] = options.get("grid_tariff_profile") in GRID_TARIFF_DEFAULTS
+    rates = overrides.get("grid_energy_rates_json")
+    if rates not in (None, "", "[]"):
+        options[INTERNAL_BUILTIN_GRID_RATES] = False
+    options[INTERNAL_GRID_ENERGY_OVERRIDES] = {
+        **options.get(INTERNAL_GRID_ENERGY_OVERRIDES, {}),
+        **{key: overrides[key] for key in ("grid_day_nok_per_kwh", "grid_night_weekend_nok_per_kwh") if key in overrides},
+    }
 
 
 def load_options() -> dict:
@@ -275,13 +327,27 @@ def parse_json_option(value, default, field: str):
 
 def build_period_options(period: dict, base_options: dict) -> dict:
     options = {**base_options}
+    new_grid = "profile" in period or "grid_tariff_profile" in period
     if "profile" in period:
         profile = period.get("profile", "custom")
         options.update(BASE_TARIFF_DEFAULTS)
         options.update(profile_defaults(profile))
-    grid_profile = period.get("grid_tariff_profile", options.get("grid_tariff_profile", ""))
-    options.update(grid_tariff_defaults(grid_profile))
-    options.update(period)
+    grid_profile = period.get("grid_tariff_profile") if "grid_tariff_profile" in period else None
+    if grid_profile in (None, ""):
+        grid_profile = options.get("grid_tariff_profile", "")
+    grid_defaults = grid_tariff_defaults(grid_profile) if new_grid else {}
+    if new_grid and not grid_defaults and options.get(INTERNAL_BUILTIN_GRID_RATES):
+        options["grid_energy_rates_json"] = "[]"
+    options.update(grid_defaults)
+    overrides = {**period}
+    if (
+        (grid_defaults or options.get(INTERNAL_BUILTIN_GRID_RATES))
+        and overrides.get("grid_energy_rates_json") in (None, "", "[]")
+    ):
+        overrides.pop("grid_energy_rates_json", None)
+    options.update(overrides)
+    options["grid_tariff_profile"] = grid_profile
+    configure_grid_energy_overrides(options, overrides, new_grid)
     options.pop(INTERNAL_CAPACITY_MODEL, None)
     validate_capacity_profile(options)
     return options
@@ -452,17 +518,38 @@ def grid_rate_options_for(dt: datetime, tz: ZoneInfo, options: dict) -> dict:
     for rate in grid_energy_rates(options):
         months = rate.get("months", [])
         if not months or local.month in [int(month) for month in months]:
-            return {**options, **rate}
+            overrides = (
+                options.get(INTERNAL_GRID_ENERGY_OVERRIDES, {})
+                if options.get(INTERNAL_BUILTIN_GRID_RATES) else {}
+            )
+            return {**options, **rate, **overrides}
     return options
 
 
 def grid_energy_ledd(dt: datetime, tz: ZoneInfo, options: dict) -> float:
     local = dt.astimezone(tz)
+    validate_grid_tariff_date(local, options)
     rate_options = grid_rate_options_for(dt, tz, options)
     is_weekday_day = local.weekday() < 5 and 6 <= local.hour < 22 and not is_norwegian_public_holiday(local.date())
     if is_weekday_day:
         return float(rate_options["grid_day_nok_per_kwh"])
     return float(rate_options["grid_night_weekend_nok_per_kwh"])
+
+
+def validate_grid_tariff_date(dt: datetime, options: dict, capacity: bool = False) -> None:
+    if capacity:
+        if has_custom_capacity_model(options):
+            return
+        profile = options.get("grid_capacity_profile", "custom")
+        year = GRID_CAPACITY_YEARS.get(profile)
+    else:
+        profile = options.get("grid_tariff_profile", "")
+        year = GRID_TARIFF_YEARS.get(profile)
+    if year is not None and dt.year != year:
+        raise ValueError(
+            f"Grid profile '{profile}' is verified only for {year}, but costs were requested for {dt.date()}. "
+            "Configure tariff_periods_json with a verified profile or custom prices for that date."
+        )
 
 
 def has_custom_capacity_model(options: dict) -> bool:
@@ -558,15 +645,23 @@ def legacy_capacity_model(options: dict) -> dict:
     return {"type": "disabled", "monthly_nok": 0.0}
 
 
-def build_capacity_model(options: dict) -> dict:
-    if INTERNAL_CAPACITY_MODEL in options:
-        return options[INTERNAL_CAPACITY_MODEL]
-    if has_custom_capacity_model(options):
-        raw_model = parse_json_option(options.get("capacity_model_json"), {}, "capacity_model_json")
-    else:
-        raw_model = legacy_capacity_model(options)
-    model = normalize_capacity_model(raw_model)
-    options[INTERNAL_CAPACITY_MODEL] = model
+def build_capacity_model(options: dict, month: int | None = None) -> dict:
+    if INTERNAL_CAPACITY_MODEL not in options:
+        if has_custom_capacity_model(options):
+            raw_model = parse_json_option(options.get("capacity_model_json"), {}, "capacity_model_json")
+        else:
+            raw_model = legacy_capacity_model(options)
+        options[INTERNAL_CAPACITY_MODEL] = normalize_capacity_model(raw_model)
+    model = options[INTERNAL_CAPACITY_MODEL]
+    season = BUILTIN_CAPACITY_SEASONS.get(options.get("grid_capacity_profile"))
+    if not has_custom_capacity_model(options) and season and month in season["months"]:
+        model = {
+            **model,
+            "tiers": [
+                {**tier, "monthly_nok": float(amount)}
+                for tier, amount in zip(model["tiers"], season["monthly_nok"], strict=True)
+            ],
+        }
     return model
 
 
@@ -582,8 +677,11 @@ def select_capacity_tier(value_kw: float, model: dict) -> tuple[dict | None, dic
             continue
         if value_kw < lower and next_tier is None:
             next_tier = tier
-    if current is None and tiers:
-        current = tiers[-1]
+    if current is None:
+        raise ValueError(
+            f"Capacity usage {value_kw:g} kW is outside the configured tariff tiers. "
+            "Configure capacity_model_json with verified prices for this usage."
+        )
     if current:
         for tier in tiers:
             if tier["from_kw"] > current["from_kw"]:
@@ -790,12 +888,45 @@ def build_spot_rows(rows: list[dict], options: dict) -> list[tuple[int, float]]:
     return sorted(spot)
 
 
+def capacity_history_start(options: dict) -> str:
+    tz = ZoneInfo(options["timezone"])
+    start = parse_datetime(options["start_time"], tz, "start_time")
+    if start is None:
+        raise ValueError("start_time must be configured")
+    earliest = start
+    tariffs = [options, *(period["options"] for period in options.get(INTERNAL_TARIFF_PERIODS, []))]
+    for tariff in tariffs:
+        model = build_capacity_model(tariff)
+        offset = int(model.get("capacity_basis_month_offset", 0))
+        if offset < 0 and model["type"] in {"monthly_top_n_daily_peaks", "monthly_max_hour"}:
+            basis_key = shift_month_key(month_key(start, tz), offset, tz)
+            earliest = min(earliest, month_bounds(basis_key, tz)[0])
+    return earliest.isoformat()
+
+
+def require_capacity_history(key: str, hour_starts: set[int], tz: ZoneInfo) -> None:
+    start, end = month_bounds(key, tz)
+    # Count actual elapsed hours, including the 23/25-hour days at DST changes.
+    expected = set(range(int(start.timestamp() * 1000), int(end.timestamp() * 1000), 3_600_000))
+    missing = expected - hour_starts
+    if missing:
+        raise ValueError(
+            f"Capacity calculation requires complete hourly consumption statistics for {key}; "
+            f"{len(missing)} of {len(expected)} hours are missing. "
+            "Restore that history or configure a verified fixed_monthly capacity_model_json "
+            "for the affected tariff period. Existing cost statistics have not been changed."
+        )
+
+
 def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -> tuple[list[dict], dict]:
     tz = ZoneInfo(options["timezone"])
+    import_start = parse_datetime(options.get("start_time"), tz, "start_time")
+    import_start_ms = int(import_start.timestamp() * 1000) if import_start else None
     sorted_spot = build_spot_rows(spot_rows, options)
     clean_rows = []
     daily_peak_by_month = defaultdict(dict)
     hourly_peaks_by_month = defaultdict(list)
+    hour_starts_by_month = defaultdict(set)
 
     for row in sorted(energy_rows, key=lambda item: item["start"]):
         change = row.get("change")
@@ -804,8 +935,10 @@ def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -
         kwh = max(float(change), 0.0)
         start = datetime.fromtimestamp(row["start"] / 1000, tz=tz)
         key = month_key(start, tz)
-        clean_rows.append((int(row["start"]), start, kwh))
+        if import_start_ms is None or row["start"] >= import_start_ms:
+            clean_rows.append((int(row["start"]), start, kwh))
         hourly_peaks_by_month[key].append({"date": start.isoformat(), "timestamp": start.isoformat(), "kw": kwh})
+        hour_starts_by_month[key].add(int(row["start"]))
         date_key = start.date().isoformat()
         if kwh >= daily_peak_by_month[key].get(date_key, {"kw": -1.0})["kw"]:
             daily_peak_by_month[key][date_key] = {
@@ -815,7 +948,7 @@ def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -
             }
 
     monthly_fixed = {}
-    for key, day_peaks in daily_peak_by_month.items():
+    for key in dict.fromkeys(month_key(start, tz) for _, start, _ in clean_rows):
         month_start, month_end = month_bounds(key, tz)
         month_seconds = (month_end - month_start).total_seconds()
         capacity_cost = 0.0
@@ -824,11 +957,15 @@ def build_stats(energy_rows: list[dict], spot_rows: list[dict], options: dict) -
         tariff_names = []
         for tariff, tariff_name, seconds in tariff_slices_for_range(month_start, month_end, options):
             fraction = seconds / month_seconds if month_seconds else 0.0
-            model = build_capacity_model(tariff)
+            validate_grid_tariff_date(month_start, tariff)
+            validate_grid_tariff_date(month_start, tariff, capacity=True)
+            model = build_capacity_model(tariff, month_start.month)
             basis_offset = int(model.get("capacity_basis_month_offset", 0))
             basis_key = shift_month_key(key, basis_offset, tz)
             basis_day_peaks = daily_peak_by_month.get(basis_key, {})
             basis_hourly_peaks = hourly_peaks_by_month.get(basis_key, [])
+            if basis_offset != 0 and model["type"] in {"monthly_top_n_daily_peaks", "monthly_max_hour"}:
+                require_capacity_history(basis_key, hour_starts_by_month.get(basis_key, set()), tz)
             capacity = capacity_result_for_model(model, basis_day_peaks, basis_hourly_peaks, tariff)
             capacity["capacity_basis_month"] = basis_key
             capacity["capacity_basis_month_offset"] = basis_offset
@@ -1018,6 +1155,8 @@ async def send_command(ws, msg_id: int, command: dict) -> dict:
 
 
 async def connect():
+    import websockets
+
     token = os.environ["SUPERVISOR_TOKEN"]
     ws = await websockets.connect(CORE_WS_URL, open_timeout=10)
     greeting = json.loads(await ws.recv())
@@ -1058,7 +1197,7 @@ async def import_costs(options: dict, replace: bool) -> None:
             1,
             {
                 "type": "recorder/statistics_during_period",
-                "start_time": options["start_time"],
+                "start_time": capacity_history_start(options),
                 "period": "hour",
                 "statistic_ids": [energy_id],
                 "types": ["sum", "change"],

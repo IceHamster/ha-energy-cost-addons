@@ -47,7 +47,7 @@ When `monthly_cost_entity` is a `sensor.*`, the sensor state is the estimated to
 - `capacity_peak_days`, `capacity_peak_timestamps` and `capacity_peak_values_kw`: the peaks used by the capacity model. `capacity_peak_timestamps` contains the exact hour start for dashboard markers.
 - `capacity_daily_peak_days`, `capacity_daily_peak_timestamps` and `capacity_daily_peak_values_kw`: all daily maximum hourly consumption values for the month. Use these for fast capacity charts.
 - `capacity_basis_month`: the month used as the basis for capacity tier calculation.
-- `capacity_basis_incomplete`: `true` when the configured basis month has no imported consumption history.
+- `capacity_basis_incomplete`: retained for compatibility. Imports requiring a previous basis month now stop if any hourly consumption statistics for that month are missing, rather than publishing an estimated capacity charge.
 - `capacity_warning_level`: `ok`, `near_next_tier`, `at_highest_tier`, `fixed` or `disabled`.
 
 Recommended dashboard pattern:
@@ -122,18 +122,40 @@ Current built-in grid tariff profiles:
 
 - `fagne_2026_private`: Fagne private/cabin tariff defaults used by the legacy Hyttekraft + Fagne profile.
 - `lnett_2026_private`: LNETT private tariff defaults used by the legacy Vibb + LNETT profile.
-- `elvia_2026_private`: Elvia private tariff from 2026-07-01. Uses the official tariff sheet day/night energy prices and Elvia capacity steps.
+- `elvia_2026_private`: Elvia private tariff for all of 2026. Automatically selects January–June or July–December energy prices and capacity steps.
 - `eviny_bkk_2026_private`: Eviny/BKK private tariff from 2026-01-01. Uses BKK day/night energy prices and capacity steps.
 - `bkk_2026_private`: same as `eviny_bkk_2026_private`, with the grid company name.
 
-Historical aliases for dated tariff periods:
+Historical aliases for dated tariff periods, covering all of 2025:
 
 - `eviny_bkk_2025_private`
 - `bkk_2025_private`
 
+The BKK 2025 presets select January–March, April–August, September or October–December energy prices, and the capacity prices effective before or from September. Capacity prices follow the month being billed; consumption peaks come from the previous month.
+
+All grid prices include VAT, electricity tax and Enova charges. Sources were checked on **2026-11-06**. Presets are maintained in add-on releases and do not fetch live prices. Year-specific grid and capacity presets reject cost calculations outside their named year. For imports spanning multiple years, use `tariff_periods_json` to select each year's verified profile or custom prices. Check the published prices after any announced tariff change, including changes within the same year.
+
+| Grid profile | Period | Day, NOK/kWh | Night/weekend, NOK/kWh |
+| --- | --- | --- | --- |
+| Fagne 2026 | January–December | 0.4516 | 0.3516 |
+| LNETT 2026 | January–December | 0.4216 | 0.2716 |
+| Elvia 2026 | January–June | 0.3640 | 0.2640 |
+| Elvia 2026 | July–December | 0.4640 | 0.3140 |
+| BKK 2025 | January–March | 0.5094 | 0.3821 |
+| BKK 2025 | April–August | 0.5986 | 0.4713 |
+| BKK 2025 | September | 0.5837 | 0.4615 |
+| BKK 2025 | October–December | 0.5287 | 0.4065 |
+| BKK 2026 | January–December | 0.4613 | 0.2329 |
+
 The grid day/night split treats weekdays 06:00-22:00 as day price. Evenings, nights, weekends and Norwegian public holidays use the night/weekend price.
 
-BKK/Eviny calculates the capacity tier from the previous month. The add-on handles this with `capacity_basis_month_offset: -1` in the built-in model. If your `start_time` does not include the previous month, the first calculated month can show `capacity_basis_incomplete: true`.
+BKK/Eviny calculates the capacity tier from the previous month. The add-on handles this with `capacity_basis_month_offset: -1` in the built-in model and fetches the extra month automatically. Keep `start_time` at the date from which you want costs imported. Earlier consumption is used only to determine capacity: no earlier costs, supplier fees or quota consumption are imported. Home Assistant must retain complete hourly statistics for the basis month, including hours with zero usage and both hours at the autumn daylight-saving change.
+
+If previous-month statistics are missing or partial, the import stops before clearing or writing cost statistics. Restore the history or configure a `fixed_monthly` capacity model with the verified charge from your bill for that affected tariff period. Subsequent months can continue using the normal BKK capacity model.
+
+LNETT's published private capacity tiers end at 25 kW. The built-in model supports values below 25 kW and stops at or above 25 kW. For higher usage, configure `capacity_model_json` using the price confirmed by LNETT. Custom tier models also stop when usage falls outside their configured ranges.
+
+Explicit day/night prices override the built-in historical energy defaults. A nonempty custom `grid_energy_rates_json` takes precedence over those flat prices for matching months. The default `"[]"` keeps built-in historical rates. Explicit capacity models take precedence over the historical built-in capacity steps.
 
 Example with a custom supplier and Elvia grid:
 
@@ -148,7 +170,7 @@ spot_price_unit: ore_per_kwh
 spot_price_multiplier_to_nok_per_kwh: 0.01
 cost_statistic_id: energy_cost_importer:elvia_total
 monthly_cost_entity: sensor.power_cost_this_month
-start_time: "2026-07-01T00:00:00+02:00"
+start_time: "2026-01-01T00:00:00+01:00"
 timezone: Europe/Oslo
 update_interval_minutes: 60
 daily_rebuild_time: "03:17"
@@ -208,7 +230,25 @@ norgespris_nok_per_kwh: 0.50
 
 Most users can keep the simple top-level configuration above. If prices change over time, use `tariff_periods_json` in the add-on configuration. Do not put this in `configuration.yaml` or in Lovelace.
 
-When `tariff_periods_json` is empty or omitted, the add-on behaves exactly like older versions: the top-level profile and tariff fields apply to the whole imported history.
+When `tariff_periods_json` is empty or omitted, the top-level profile applies to the whole imported history, including its built-in monthly price changes. A year-specific profile only covers its named year.
+
+For BKK imports spanning 2025 and 2026, combine the profiles as follows (alongside your sensor and supplier settings):
+
+```yaml
+grid_tariff_profile: bkk_2026_private
+start_time: "2025-01-01T00:00:00+01:00"
+tariff_periods_json: >
+  [
+    {
+      "name": "BKK 2025",
+      "valid_from": "2025-01-01T00:00:00+01:00",
+      "valid_to": "2026-01-01T00:00:00+01:00",
+      "grid_tariff_profile": "bkk_2025_private"
+    }
+  ]
+```
+
+The first month requires complete December 2024 consumption statistics for its capacity calculation. Those supporting rows are fetched automatically and are not billed by the importer.
 
 When `tariff_periods_json` is configured, the add-on chooses the active tariff period for each hourly consumption row:
 
@@ -326,13 +366,14 @@ For custom capacity tiers, use JSON:
 
 ```yaml
 grid_capacity_profile: custom
-grid_capacity_tiers_json: '[[0,2,150],[2,5,250],[5,10,400],[10,15,650],[15,20,900],[20,25,1150],[25,null,1150]]'
+grid_capacity_tiers_json: '[[0,2,150],[2,5,250],[5,10,400],[10,15,650],[15,20,900],[20,25,1150]]'
 ```
 
 Built-in grid capacity profiles:
 
 - `elvia_2026_private`
 - `bkk_2026_private`
+- `bkk_2025_private`
 - `fagne_2026`
 - `lnett_2026_private`
 - `custom`
@@ -364,8 +405,7 @@ capacity_model_json: >
       {"label": "5-10 kW", "from_kw": 5, "to_kw": 10, "monthly_nok": 400},
       {"label": "10-15 kW", "from_kw": 10, "to_kw": 15, "monthly_nok": 650},
       {"label": "15-20 kW", "from_kw": 15, "to_kw": 20, "monthly_nok": 900},
-      {"label": "20-25 kW", "from_kw": 20, "to_kw": 25, "monthly_nok": 1150},
-      {"label": "over 25 kW", "from_kw": 25, "to_kw": null, "monthly_nok": 1150}
+      {"label": "20-25 kW", "from_kw": 20, "to_kw": 25, "monthly_nok": 1150}
     ]
   }
 ```
@@ -483,7 +523,16 @@ The same applies to LNETT, where the monthly capacity tier is based on the avera
 
 ## Sources
 
+Grid tariffs last verified on **2026-11-06**:
+
+- [Fagne private tariffs](https://fagne.no/kunde-og-nettleie/nettleie-priser-og-vilkar/priser-privatkunder/): 2026 energy prices and capacity steps.
+- [LNETT private tariffs](https://www.l-nett.no/nettleie/priser-og-vilkar-privat/): 2026 energy prices, public charges, capacity steps and their exclusive upper boundaries. No private tier above 25 kW is published.
+- [Elvia tariff from 2026-01-01](https://www.elvia.no/siteassets/dokumenter/priser/2026/tariffblad_1_0_standard-tariff_privat_20260101.pdf): January–June 2026 energy prices and capacity steps.
+- [Elvia tariff from 2026-07-01](https://www.elvia.no/siteassets/dokumenter/priser/2026/1-juli-2026/tariffblad_1_0_standard-tariff_privat_20260701.pdf): July–December 2026 energy prices and capacity steps.
+- [BKK private tariffs](https://www.bkk.no/alt-om-nettleie/nettleiepriser/priser-privatkunder): 2026 and October–December 2025 energy prices, capacity steps and the previous-month capacity basis.
+- [BKK historical tariffs](https://www.bkk.no/alt-om-nettleie/nettleiepriser/historiske-priser): January–August 2025 prices and September 2025 prices.
+
+Supplier presets (separate from the grid tariff verification):
+
 - Vibb price list: Vibb Spot is listed with 49 NOK monthly fixed amount and 0 ore/kWh markup.
-- LNETT private grid tariff 2026: capacity tiers, day/night energy tariff, consumption tax and Enova fee.
-- Fagne private grid tariff 2026: capacity tiers and day/night energy tariff.
 - Haugaland Kraft Hyttekraft: spot agreement with markup and monthly fixed amount.
