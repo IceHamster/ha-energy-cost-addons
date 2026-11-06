@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.4
+
+- Pin the Home Assistant base image to `3.24-2026.10.3`.
+- Refresh Python and timezone data from the supported Alpine package repository during builds.
+- Upgrade `websockets` to `17.4`, including its fragmented-message security fix.
+- Run the importer from a dedicated Python virtual environment with pinned Python requirements.
+
 ## 0.2.3
 
 - Add `capacity_daily_peak_days`, `capacity_daily_peak_timestamps` and `capacity_daily_peak_values_kw`.

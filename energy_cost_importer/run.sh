@@ -1,4 +1,4 @@
 #!/usr/bin/with-contenv bash
 set -euo pipefail
 
-exec python3 /app.py
+exec /opt/venv/bin/python /app.py
